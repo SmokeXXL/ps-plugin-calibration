@@ -28,6 +28,10 @@ The `build.erik.calibration` bundle contains:
   the result under *Printer → Extruder → Retraction → Length*. Pure `G1`
   output; the retraction values are baked into the G-code, so it works on
   every firmware.
+- **Ironing** — a matrix of pads, each ironed at a different combination
+  of ironing flow (%, columns) and ironing speed (mm/s, rows). Pick the
+  smoothest pad and enter its flow and speed under *Print → Infill →
+  Ironing*.
 - **Firmware Probe** — diagnostic that reports what the plugin API can read
   from your printer profile and which G-code dialect it resolves to. Run
   PrusaSlicer from a terminal to see its output; useful when reporting
@@ -47,6 +51,22 @@ user plugin folder, then **Menu ▸ Plugins ▸ Rescan Plugins**:
 (The `-dev` suffix applies to alpha/beta builds.)
 
 **Requires PrusaSlicer 3.0.0-alpha11 or newer.**
+
+## Building a release
+
+The plugin files must stay in a directory named `build.erik.calibration`
+(it matches the `id` in `manifest.json`); `release.sh` packages that
+directory.
+
+- **Local build** — `./release.sh --local` writes
+  `build.erik.calibration-v<version>.zip` to the repo root and does
+  nothing else (no tag, push, or GitHub release). Unzip it into the plugin
+  folder above.
+- **Published release** — `./release.sh` (maintainers only; needs a clean
+  tree, push access to `origin`, and an authenticated `gh`) tags the commit
+  `v<version>`, pushes it, and creates a GitHub release with the zip
+  attached. Bump `version` in `manifest.json` first; the script refuses to
+  reuse an existing tag.
 
 ## PA Pattern notes
 
