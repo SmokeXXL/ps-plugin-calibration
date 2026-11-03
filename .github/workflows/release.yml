@@ -9,8 +9,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: prusa3d/plugin-marketplace-publish@v1
         with:
-          path: .
+          path: build.erik.calibration
           private-key: ${{ secrets.PRUSA_SLICER_PLUGIN_MARKETPLACE_SIGNING_KEY }}
