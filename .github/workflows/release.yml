@@ -1,0 +1,16 @@
+name: Publish to Plugin Marketplace
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: prusa3d/plugin-marketplace-publish@v1
+        with:
+          path: .
+          private-key: ${{ secrets.PRUSA_SLICER_PLUGIN_MARKETPLACE_SIGNING_KEY }}
