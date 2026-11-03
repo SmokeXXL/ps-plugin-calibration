@@ -2,7 +2,7 @@
 	"id": "io.github.smokexxl.calibration",
 	"name": "Calibration Tools (Fork of Erik's Calibration Tools)",
 	"license": "OCL v1.1 + SWAtt v1",
-	"min_slicer_version": "3.0.0",
+	"min_slicer_version": "3.0.0-alpha0",
 	"version": "0.9.0",
 	"author": "15795f21-9b2f-44c6-81ba-b1f4333785cb",
 	"description": "Calibration plugins ported from OrcaSlicer. Originally based on build.erik.calibration by erik.",
