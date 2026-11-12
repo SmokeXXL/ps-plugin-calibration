@@ -15,8 +15,21 @@ function M.new(opts)
         deretract_speed = opts.deretract_speed or retract_speed,
         zhop = opts.zhop or 0.5,
         retracted = opts.retracted or false,   -- extruder state on entry
+        -- filament feed ceiling [mm of filament / s] from the filament's max
+        -- volumetric speed; nil = uncapped. Every extrusion goes through
+        -- line_to, which slows any move that would exceed it.
+        max_e_rate = opts.max_e_rate,
         out = {},
     }
+end
+
+--- Filament feed ceiling for a max volumetric speed [mm3/s], or nil when the
+--- profile sets none (0). Dividing by the filament's cross-section turns the
+--- volumetric limit into the E-axis rate that line_to compares against.
+function M.max_e_rate(vol_cap, filament_d)
+    if not vol_cap or vol_cap <= 0 then return nil end
+    local d = filament_d or 1.75
+    return vol_cap / (math.pi * (d / 2) ^ 2)
 end
 
 --- Writer options from a settings table: the profile's retraction values, and
@@ -32,6 +45,7 @@ function M.writer_opts(S)
         deretract_speed = deretract,
         zhop = S.zhop,
         retracted = S.retract_layer_change ~= false,
+        max_e_rate = M.max_e_rate(S.vol_cap, S.filament_d),
     }
 end
 
@@ -99,7 +113,13 @@ function M.hop_to(w, x, y)
 end
 
 --- Extruding move from the current position; epm from M.e_per_mm, speed in mm/s.
+--- The speed is lowered, never raised, so the move stays within the
+--- filament's max volumetric speed: generators hard-code some speeds (first
+--- layer, digits) that a soft or slow filament cannot feed.
 function M.line_to(w, x, y, epm, speed)
+    if w.max_e_rate and epm > 0 then
+        speed = math.min(speed, w.max_e_rate / epm)
+    end
     local d = math.sqrt((x - w.x) ^ 2 + (y - w.y) ^ 2)
     M.emit(w, string.format("G1 X%s Y%s E%.5f F%d",
                             fmm(x), fmm(y), d * epm, math.floor(speed * 60)))

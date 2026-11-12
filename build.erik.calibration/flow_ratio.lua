@@ -63,12 +63,8 @@ function execute(opts)
             end
             return tools[1]:nozzle_diameter()
         end),
-        perimeter_speed = util.guarded(0, function()
-            return bed:print_presets():value("perimeter_speed")
-        end),
-        travel_speed = util.guarded(150, function()
-            return bed:print_presets():value("travel_speed")
-        end),
+        perimeter_speed = util.tool_value(bed, slot_idx, "perimeter_speed", 0),
+        travel_speed = util.tool_value(bed, slot_idx, "travel_speed", 150),
         vol_cap = util.guarded(0, function()
             return bed:material_presets(slot_idx):value("filament_max_volumetric_speed")
         end),
@@ -76,22 +72,16 @@ function execute(opts)
             return bed:material_presets(slot_idx):value("filament_diameter")
         end),
         flow_mult = 1.0,
-        retract = util.guarded(0.8, function()
-            return bed:print_presets():value("retract_length")
-        end),
-        retract_speed = util.guarded(35, function()
-            return bed:print_presets():value("retract_speed")
-        end),
-        deretract_speed = util.guarded(0, function()
-            return bed:print_presets():value("deretract_speed")
-        end),
-        zhop = util.guarded(0.5, function()
-            return bed:print_presets():value("retract_lift")
-        end),
-        retract_layer_change = util.guarded(true, function()
-            return bed:print_presets():value("retract_layer_change")
-        end),
+        retract = util.tool_value(bed, slot_idx, "retract_length", 0.8),
+        retract_speed = util.tool_value(bed, slot_idx, "retract_speed", 35),
+        deretract_speed = util.tool_value(bed, slot_idx, "deretract_speed", 0),
+        zhop = util.tool_value(bed, slot_idx, "retract_lift", 0.5),
+        retract_layer_change = util.tool_value(bed, slot_idx, "retract_layer_change", true),
     }
+    local _, retract_src = util.tool_value(bed, slot_idx, "retract_length", 0.8)
+    print(string.format(
+        "Flow Ratio: Tool T%d retract %.2f mm @ %g mm/s, lift %.2f (from %s); max flow %g mm3/s",
+        slot_idx, S.retract, S.retract_speed, S.zhop, retract_src, S.vol_cap))
 
     local r = gen.build(S)
     if not r.fits then

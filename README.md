@@ -19,7 +19,11 @@ The `build.erik.calibration` bundle adds four tests under
 Each test generates its own G-code, so it ignores most of your print
 profile. It reads only the nozzle diameter, layer height, filament
 diameter, max volumetric speed, travel and retraction settings, and the
-results of the tests before it.
+results of the tests before it. Travel, perimeter speed and retraction
+are read for the selected tool the way the slicer resolves them: the
+filament's override first, then the tool's print settings, then the
+print preset. The console line each test prints says which one the
+retraction length came from.
 
 ## Install
 
@@ -104,9 +108,13 @@ step. The next test reads the saved values.
   assigns all extruders to the selected tool. Ironing also turns off
   the slicer's own ironing. Don't save these into your print preset;
   reload or revert it after printing the test.
-- **Auto speeds are capped** by the filament's *Max volumetric speed*,
+- **Every extrusion is capped** by the filament's *Max volumetric speed*,
   if one is set, so a test doesn't print faster than the filament can
-  melt. In PA Pattern, an explicit Speed bypasses the cap.
+  melt or feed. That includes the fixed-speed first layer, tabs and
+  digits, and an explicit Speed: a move that would exceed the cap is
+  slowed to it. Soft filaments such as 85A TPU buckle in the extruder
+  otherwise. To test above the cap, raise or clear *Max volumetric
+  speed* first.
 
 ## 1. Flow Ratio
 
@@ -197,7 +205,8 @@ OrcaSlicer's retraction tower: two thin posts. The travel move between
 them retracts a bit more with every millimeter of height. The retraction
 lengths are written directly into the G-code with pure `G1` moves, so
 it works on every firmware. Retract speed, deretract speed, and Z-hop
-come from your current profile.
+come from your current profile, filament overrides included; every other
+travel uses your profile's retraction length too.
 
 **Run it:** *Plugins ▸ Calibration ▸ Retraction*.
 
