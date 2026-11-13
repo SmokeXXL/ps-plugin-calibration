@@ -3,7 +3,7 @@
 	"name": "Calibration Tools (Ironing, PA, Flow, Retraction)",
 	"license": "OCL v1.1 + SWAtt v1",
 	"min_slicer_version": "3.0.0-alpha0",
-	"version": "0.9.2",
+	"version": "0.9.3",
 	"author": "15795f21-9b2f-44c6-81ba-b1f4333785cb",
 	"description": "Calibration tools including generators for flow ratio, pressure advance, retraction, and ironing tests. Ported from OrcaSlicer to PrusaSlicer, originally based on build.erik.calibration by erik.",
 	"required_apis": {

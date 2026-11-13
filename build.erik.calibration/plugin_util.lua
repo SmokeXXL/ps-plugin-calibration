@@ -11,6 +11,26 @@ function M.guarded(fallback, fn)
     return fallback
 end
 
+--- Effective value of a per-tool setting for one slot, as the slicer resolves
+--- it: the filament's override, else the tool print's, else the print
+--- preset's, else fallback. Retraction and speeds are Print keys that the tool
+--- print and the filament may override, so reading the print preset alone
+--- returns a value this tool never prints with. A box that lacks the key, or
+--- leaves the override unset, raises or yields nil and falls through.
+--- Returns the value and the box it came from.
+function M.tool_value(bed, slot_idx, name, fallback)
+    local sources = {
+        {"filament", function() return bed:material_presets(slot_idx):value(name) end},
+        {"tool", function() return bed:tool_print_presets(slot_idx):value(name) end},
+        {"print", function() return bed:print_presets():value(name) end},
+    }
+    for _, src in ipairs(sources) do
+        local ok, v = pcall(src[2])
+        if ok and v ~= nil then return v, src[1] end
+    end
+    return fallback, "default"
+end
+
 --- Failures must be visible: emboss the message as an object on the plate.
 function M.show_error(prefix, msg)
     print(prefix .. ": " .. msg)
