@@ -1,12 +1,10 @@
 -- ABOUTME: Builds the Ellis and Lines pressure-advance patterns as per-layer
 -- ABOUTME: G-code blobs keyed to the handle object's layer heights. Pure.
 
--- Lazy proxies: `require` is unavailable while the plugin scan loads this file.
-local function lazy(name)
-    return setmetatable({}, {__index = function(_, k) return require(name)[k] end})
-end
-local draw = lazy("draw")
-local firmware = lazy("firmware")
+-- Lazy proxies: `require` is unavailable while the plugin scan loads this file,
+-- so each module is resolved on first use. Names are literals (marketplace check).
+local draw = setmetatable({}, {__index = function(_, k) return require("draw")[k] end})
+local firmware = setmetatable({}, {__index = function(_, k) return require("firmware")[k] end})
 
 local M = {}
 
