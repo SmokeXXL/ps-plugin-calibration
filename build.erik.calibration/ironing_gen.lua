@@ -229,7 +229,7 @@ function M.draw_pad(draw, w, pad, i, S, L, speed)
             draw.emit(w, string.format("; LABEL %s", pad.label))
             local glyph_w = L.width.wall
             local epm_glyph = draw.e_per_mm(glyph_w, L.h, S.filament_d, base_mult)
-            local raw_w = math.max(2.0, (#pad.label - 1) * 3.0 + 2.0)
+            local raw_w = math.max(2.0, draw.text_width(pad.label))
             local max_w = M.TAB_W - 2.0
             local scale = math.min(1.0, max_w / raw_w)
             local ox = pad.tab_x0 + (M.TAB_W - raw_w * scale) / 2

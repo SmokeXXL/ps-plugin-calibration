@@ -26,7 +26,7 @@ info = {
         {name = "bed_depth", label = "Bed Depth [mm]", type = "int", default = 220},
         {
             name = "firmware",
-            label = "Firmware (auto|marlin|marlin2|prusabuddy|klipper|rrf)",
+            label = "Firmware (auto|marlin|marlin2|prusabuddy|klipper|rrf|repetier)",
             type = "string",
             default = "auto",
         },
@@ -53,7 +53,7 @@ function execute(opts)
         return
     end
 
-    local tool_idx = math.max(1, opts.tool or 1)
+    local tool_idx = util.clamp_tool(bed, opts.tool)
     local slot_idx = tool_idx - 1
 
     local ui_nozzle = util.parse_number(opts.nozzle, 0)
@@ -114,6 +114,10 @@ function execute(opts)
     end
 
     local r = gen.build(S)
+    if not r.fits then
+        util.show_error("PA Pattern", "PA: BED TOO SMALL")
+        return
+    end
 
     -- Force slicer to use selected tool for global settings and wiping
     bed:print_presets():set("perimeter_extruder", tool_idx)

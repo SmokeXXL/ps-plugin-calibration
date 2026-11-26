@@ -38,7 +38,7 @@ function execute(opts)
         return
     end
 
-    local tool_idx = math.max(1, opts.tool or 1)
+    local tool_idx = util.clamp_tool(bed, opts.tool)
     local slot_idx = tool_idx - 1
     
     local ui_nozzle = util.parse_number(opts.nozzle, 0)
@@ -96,7 +96,7 @@ function execute(opts)
 
     bed:print_presets():set("layer_height", S.layer_height)
     bed:print_presets():set("first_layer_height", S.layer_height)
-    bed:print_presets():set("brim_type", "no_brim")
+    pcall(function() bed:print_presets():set("brim_type", "no_brim") end)
     bed:print_presets():set("skirts", 0)
 
     -- Force slicer to use selected tool for global settings and wiping

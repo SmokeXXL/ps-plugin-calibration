@@ -1,7 +1,9 @@
 -- ABOUTME: Builds Orca's retraction tower as per-layer G-code blobs: two
 -- ABOUTME: hollow posts whose inter-post travel retracts by height band. Pure.
 
-local draw = require("draw")
+-- Lazy proxy: `require` is unavailable while the plugin scan loads this file,
+-- so the module is resolved on first use (at execute time).
+local draw = setmetatable({}, {__index = function(_, k) return require("draw")[k] end})
 
 local M = {}
 
@@ -70,8 +72,8 @@ function M.layout(S)
         {x = cx - M.POST_SPACING / 2, y = ty, seam_deg = 0},
         {x = cx + M.POST_SPACING / 2, y = ty, seam_deg = 180},
     }
-    -- The posts overhang the base plate by 2 mm on each side in X, so the
-    -- footprint is their union with it, not the plate alone.
+    -- The posts sit fully on the base (31.5 / 2 + 3 = 18.75 < 20), so this union
+    -- equals the plate today; kept as a safeguard if the dimensions change.
     L.extents = {min_x = L.base.x0, min_y = L.base.y0,
                  max_x = L.base.x0 + M.BASE_W, max_y = L.base.y0 + M.BASE_D}
     local post_r = M.POST_D / 2

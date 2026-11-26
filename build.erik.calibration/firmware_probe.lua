@@ -1,8 +1,22 @@
 -- ABOUTME: Diagnostic plugin that reports what the firmware module can read from the
 -- ABOUTME: active printer and which G-code dialect it resolves to. Changes nothing.
 
--- Zde je registrace zcela vypnuta, aby se plugin nezobrazoval v rozhraní Sliceru
-info = nil
+-- `require` is unavailable at scan time, so params are written literally.
+-- (With `info = nil` the plugin is never registered and execute() never runs.)
+info = {
+    id = "firmware_probe",
+    type = "project.plugin",
+    title = "Firmware Probe",
+    menu = "Calibration/Firmware Probe",
+    params = {
+        {
+            name = "firmware",
+            label = "Firmware (auto|marlin|marlin2|prusabuddy|klipper|rrf|repetier)",
+            type = "string",
+            default = "auto",
+        },
+    },
+}
 
 local function read(label, fn)
     local ok, value = pcall(fn)

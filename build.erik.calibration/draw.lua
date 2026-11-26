@@ -103,6 +103,13 @@ end
 
 --- Travel with retract and z-hop; ends at (x, y, layer_z), unretracted.
 function M.travel_to(w, x, y, layer_z)
+    -- Gaps below HOP_LIMIT while primed and already at layer_z (concentric
+    -- walls, glyph strokes) stay plain moves: no retract / z-hop for a fraction of a mm.
+    if not w.retracted and w.z == layer_z
+       and math.sqrt((x - w.x) ^ 2 + (y - w.y) ^ 2) < M.HOP_LIMIT then
+        M.hop_to(w, x, y)
+        return
+    end
     M.park_at(w, x, y, layer_z)
     M.unretract(w)
 end
@@ -358,7 +365,27 @@ function M.fmt_value(v)
     local s = string.format("%.4g", v)
     if #s > 5 then s = string.format("%.3g", v) end
     if #s > 5 then s = string.format("%.2g", v) end
+    if s:find("[eEn]") then
+        -- exponent notation has no glyphs; fall back to plain decimals
+        s = string.format("%.3f", v)
+        s = s:gsub("0+$", "")
+        s = s:gsub("%.$", "")
+        if s == "" or s == "-0" then s = "0" end
+    end
     return s
+end
+
+--- Width of `str` in glyph units (scale 1), counting the narrower decimal
+--- point, from the string origin to the right edge of the last glyph.
+function M.text_width(str)
+    local adv = 0
+    for i = 1, #str do
+        local ch = str:sub(i, i)
+        local dot = (ch == "." or ch == ",")
+        if i == #str then return adv + (dot and 0.7 or 2.0) end
+        adv = adv + (dot and GLYPH_PITCH * 0.65 or GLYPH_PITCH)
+    end
+    return 2.0
 end
 
 --- Draw `str` as 7-segment strokes; each segment is drawn with `opts.perimeters`

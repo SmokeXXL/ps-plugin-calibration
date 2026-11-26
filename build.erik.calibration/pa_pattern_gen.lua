@@ -1,8 +1,12 @@
 -- ABOUTME: Builds the Ellis and Lines pressure-advance patterns as per-layer
 -- ABOUTME: G-code blobs keyed to the handle object's layer heights. Pure.
 
-local draw = require("draw")
-local firmware = require("firmware")
+-- Lazy proxies: `require` is unavailable while the plugin scan loads this file.
+local function lazy(name)
+    return setmetatable({}, {__index = function(_, k) return require(name)[k] end})
+end
+local draw = lazy("draw")
+local firmware = lazy("firmware")
 
 local M = {}
 
@@ -22,12 +26,27 @@ M.INSERT_Z_FRACTION = 0.5  -- blobs inserted at (i - this) * layer_height
 --- Orca's find_optimal_PA_speed: at least 100 mm/s (or the profile's perimeter
 --- speed if higher), capped by the filament volumetric limit; cap 0 = uncapped.
 function M.resolve_speed(requested, perimeter_speed, vol_cap, line_width, layer_height)
-    if requested and requested > 0 then return requested end
-    local speed = math.max(100, perimeter_speed or 0)
+    local speed = (requested and requested > 0) and requested
+                  or math.max(100, perimeter_speed or 0)
     if vol_cap and vol_cap > 0 then
         speed = math.min(speed, vol_cap / draw.bead_area(line_width, layer_height))
     end
     return math.floor(speed)
+end
+
+--- Volumetric cap in "flow_mult = 1" terms: the beads are extruded at
+--- flow_mult, so the filament limit corresponds to a smaller geometric flow.
+local function vol_cap_for(S)
+    local m = (S.flow_mult and S.flow_mult > 0) and S.flow_mult or 1
+    return (S.vol_cap and S.vol_cap > 0) and S.vol_cap / m or 0
+end
+
+--- True when the footprint keeps MARGIN from every bed edge.
+local function within(e, S)
+    local eps = 1e-6
+    return e.min_x >= M.MARGIN - eps and e.min_y >= M.MARGIN - eps
+       and e.max_x <= S.bed_w - M.MARGIN + eps
+       and e.max_y <= S.bed_d - M.MARGIN + eps
 end
 
 --------------------------------------------------------------------------------
@@ -148,7 +167,7 @@ end
 
 function M.build_ellis(S)
     local L = M.layout_ellis(S)
-    local speed = M.resolve_speed(S.speed, S.perimeter_speed, S.vol_cap, L.lw, L.h)
+    local speed = M.resolve_speed(S.speed, S.perimeter_speed, vol_cap_for(S), L.lw, L.h)
     local epm = draw.e_per_mm(L.lw, L.h, S.filament_d, S.flow_mult)
     local epm_first = draw.e_per_mm(L.lw_first, L.h, S.filament_d, S.flow_mult)
     local epm_glyph = draw.e_per_mm(L.lw, L.h, S.filament_d, S.flow_mult)
@@ -161,9 +180,8 @@ function M.build_ellis(S)
         draw.emit(w, string.format("; PA_PATTERN layer %d", i))
         draw.emit(w, "G90")
         draw.emit(w, "M83")
-        if S.accel and S.accel > 0 then
-            draw.emit(w, string.format("M204 S%d", S.accel))
-        end
+        local accel_cmd = firmware.set_acceleration(S.flavor, S.accel)
+        if accel_cmd then draw.emit(w, accel_cmd) end
         if i == 1 then
             draw.emit(w, firmware.set_pressure_advance(S.flavor, S.pa_start))
             if S.draw_frame then
@@ -199,9 +217,8 @@ function M.build_ellis(S)
             draw_labels(w, L, S, z, epm_glyph, speed)
         end
 
-        if i == M.LAYERS then
-            draw.emit(w, firmware.set_pressure_advance(S.flavor, 0))
-        end
+        -- every layer ends at PA 0: the handle cube prints right after this blob
+        draw.emit(w, firmware.set_pressure_advance(S.flavor, 0))
         draw.emit(w, "; park over the handle")
         draw.park_at(w, S.bed_w / 2, S.bed_d / 2, z)
         if not entry.retracted then draw.unretract(w) end
@@ -209,15 +226,17 @@ function M.build_ellis(S)
                               gcode = draw.gcode(w)})
     end
 
+    local extents = {min_x = L.prime_x, min_y = L.frame_min_y,
+                     max_x = L.frame_min_x + L.frame_w,
+                     max_y = L.tab_min_y + L.tab_h}
     return {
+        fits = within(extents, S),
         handle = {size_xy = M.HANDLE_XY, height = M.LAYERS * L.h},
         layers = layers,
         speed = speed,
         clamped = L.clamped,
         pa_end_effective = S.pa_start + (L.num_patterns - 1) * S.pa_step,
-        extents = {min_x = L.prime_x, min_y = L.frame_min_y,
-                   max_x = L.frame_min_x + L.frame_w,
-                   max_y = L.tab_min_y + L.tab_h},
+        extents = extents,
     }
 end
 
@@ -293,7 +312,7 @@ end
 
 function M.build_lines(S)
     local L = M.layout_lines(S)
-    local speed = M.resolve_speed(S.speed, S.perimeter_speed, S.vol_cap, L.lw, L.h)
+    local speed = M.resolve_speed(S.speed, S.perimeter_speed, vol_cap_for(S), L.lw, L.h)
     local epm = draw.e_per_mm(L.lw, L.h, S.filament_d, S.flow_mult)
     local epm_first = draw.e_per_mm(L.lw_first, L.h, S.filament_d, S.flow_mult)
     local epm_glyph = draw.e_per_mm(L.lw, L.h, S.filament_d, S.flow_mult)
@@ -308,9 +327,8 @@ function M.build_lines(S)
         draw.emit(w, string.format("; PA_PATTERN LINES layer %d", i))
         draw.emit(w, "G90")
         draw.emit(w, "M83")
-        if S.accel and S.accel > 0 then
-            draw.emit(w, string.format("M204 S%d", S.accel))
-        end
+        local accel_cmd = firmware.set_acceleration(S.flavor, S.accel)
+        if accel_cmd then draw.emit(w, accel_cmd) end
 
         local slow_speed = M.FIRST_LAYER_SPEED
 
@@ -407,14 +425,16 @@ function M.build_lines(S)
                               gcode = draw.gcode(w)})
     end
 
+    local extents = {min_x = L.min_x, min_y = L.prime_y,
+                     max_x = L.max_x, max_y = L.frame_min_y + L.frame_h}
     return {
+        fits = within(extents, S),
         handle = {size_xy = M.HANDLE_XY, height = L.layers * L.h},
         layers = layers,
         speed = speed,
         clamped = L.clamped,
         pa_end_effective = S.pa_start + (L.num_lines - 1) * S.pa_step,
-        extents = {min_x = L.min_x, min_y = L.prime_y,
-                   max_x = L.max_x, max_y = L.frame_min_y + L.frame_h},
+        extents = extents,
     }
 end
 

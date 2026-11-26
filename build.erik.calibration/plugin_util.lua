@@ -31,6 +31,15 @@ function M.tool_value(bed, slot_idx, name, fallback)
     return fallback, "default"
 end
 
+--- 1-based tool index clamped to the number of tools the printer has, so a
+--- too-large value cannot reach the extruder settings or the presets.
+function M.clamp_tool(bed, requested)
+    local idx = math.max(1, math.floor(tonumber(requested) or 1))
+    local count = M.guarded(nil, function() return #bed:printer_config().tools end)
+    if count and count >= 1 and idx > count then idx = count end
+    return idx
+end
+
 --- Failures must be visible: emboss the message as an object on the plate.
 function M.show_error(prefix, msg)
     print(prefix .. ": " .. msg)

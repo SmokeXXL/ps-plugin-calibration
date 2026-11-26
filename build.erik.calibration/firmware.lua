@@ -9,7 +9,7 @@ local M = {}
 --- application during the startup plugin scan.
 M.PARAM = {
     name = "firmware",
-    label = "Firmware (auto|marlin|marlin2|prusabuddy|klipper|rrf)",
+    label = "Firmware (auto|marlin|marlin2|prusabuddy|klipper|rrf|repetier)",
     type = "string",
     default = "auto",
 }
@@ -41,8 +41,9 @@ end
 -- plugin runtime errors are invisible in the UI, so bad input must never throw.
 -- @param requested string|nil the firmware parameter's value
 function M.resolve(requested, model)
-    if requested and M.FLAVORS[requested] then
-        return requested
+    if type(requested) == "string" then
+        local key = requested:lower():match("^%s*(.-)%s*$")
+        if M.FLAVORS[key] then return key end
     end
     return M.detect(model)
 end
@@ -94,6 +95,17 @@ function M.set_pressure_advance(flavor, k)
         return nil
     end
     return "M900 K" .. value
+end
+
+--- Set the print acceleration. Returns nil when accel <= 0 (leave alone).
+-- RepRapFirmware takes P (print) and T (travel) rather than S.
+function M.set_acceleration(flavor, accel)
+    local a = math.floor((accel or 0) + 0.5)
+    if a <= 0 then return nil end
+    if flavor == "rrf" then
+        return string.format("M204 P%d T%d", a, a)
+    end
+    return string.format("M204 S%d", a)
 end
 
 return M

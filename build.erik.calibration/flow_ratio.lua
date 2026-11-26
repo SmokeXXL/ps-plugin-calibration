@@ -8,7 +8,7 @@ info = {
     menu = "Calibration/Flow Ratio",
     params = {
         {name = "tool", label = "Extruder / Tool (1 = T0, 2 = T1...)", type = "int", default = 1},
-        {name = "use_monotonic", label = "Use Monotonic Pattern", type = "bool", default = true},
+        {name = "use_monotonic", label = "Zigzag Top Fill (off = Archimedean)", type = "bool", default = true},
         {name = "draw_labels", label = "Print Labels", type = "bool", default = true},
         {name = "nozzle", label = "Nozzle [mm] (0 = auto)", type = "string", default = "0"},
         {name = "layer_height", label = "Layer Height [mm] (0 = auto)", type = "string", default = "0"},
@@ -35,7 +35,7 @@ function execute(opts)
         return
     end
 
-    local tool_idx = math.max(1, opts.tool or 1)
+    local tool_idx = util.clamp_tool(bed, opts.tool)
     local slot_idx = tool_idx - 1
 
     local ui_nozzle = util.parse_number(opts.nozzle, 0)

@@ -38,7 +38,7 @@ function execute(opts)
         return
     end
 
-    local tool_idx = math.max(1, opts.tool or 1)
+    local tool_idx = util.clamp_tool(bed, opts.tool)
     local slot_idx = tool_idx - 1
 
     local ui_nozzle = util.parse_number(opts.nozzle, 0)
