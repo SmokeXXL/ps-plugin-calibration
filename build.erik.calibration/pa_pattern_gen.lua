@@ -242,6 +242,9 @@ end
 -- LINES PATTERN GENERATOR
 --------------------------------------------------------------------------------
 
+M.LINES_GLYPH_SCALE = 1.0      -- 4 mm tall digits (compact for Lines only; Ellis & other tests unchanged)
+M.LINES_FINE_STEP = 0.002      -- pa_step <= this automatically starts at every-2nd-line labeling
+
 function M.layout_lines(S)
     local L = {}
     L.lw = 1.125 * S.nozzle
@@ -250,59 +253,88 @@ function M.layout_lines(S)
     L.slow_len = 20.0
     L.fast_len = 40.0
     L.line_span_x = L.slow_len * 2 + L.fast_len
-    L.pitch_y = 6.5            -- větší rozestup pro vyšší 5mm čísla
     L.pad_y = 4.0              -- přesah rámečku nad první a pod poslední linkou
     L.layers = S.draw_labels and 2 or 1
+    L.glyph_scale = M.LINES_GLYPH_SCALE
 
     local spacing_first = L.lw_first - L.h * (1 - math.pi / 4)
     L.wall_band = M.WALLS * spacing_first
 
-    local n = math.ceil((S.pa_end - S.pa_start) / S.pa_step - 1e-9) + 1
-    L.label_w = 24.0
+    local n_req = math.ceil((S.pa_end - S.pa_start) / S.pa_step - 1e-9) + 1
+    L.label_w = 19.0           -- fits 5-char numbers at scale 1.0 (~13 mm) + padding
     L.span_x = L.line_span_x + (S.draw_labels and L.label_w or 0)
-    L.span_y = (n - 1) * L.pitch_y
-    L.frame_h = L.span_y + 2 * L.pad_y
 
     local cx, cy = S.bed_w / 2, S.bed_d / 2
     local above_prime_y = cy + M.HANDLE_XY / 2 + M.CLEARANCE
     local right_x = cx + M.HANDLE_XY / 2 + M.CLEARANCE
 
-    -- Position pattern dynamically around the centered handle cube so it never collides:
-    -- 1) Above the cube if the full configured pattern fits in the upper half of the bed,
-    -- 2) Else to the right of the cube (uses full bed depth),
-    -- 3) Else above the cube with clamped line count (small beds).
-    L.clamped = false
-    if above_prime_y + M.PRIME_GAP + L.frame_h <= S.bed_d - M.MARGIN then
+    local can_above_x = (cx - L.span_x / 2 >= M.MARGIN)
+                        and (cx + L.span_x / 2 <= S.bed_w - M.MARGIN)
+    local can_right_x = (right_x + L.span_x <= S.bed_w - M.MARGIN)
+
+    local usable_above_y = (S.bed_d - M.MARGIN) - (above_prime_y + M.PRIME_GAP) - 2 * L.pad_y
+    local usable_right_y = (S.bed_d - 2 * M.MARGIN) - M.PRIME_GAP - 2 * L.pad_y
+
+    -- Adaptive density tiers {pitch_y, label_every}:
+    -- Normal (5.2 mm, every 1st) for coarse steps;
+    -- Dense (3.0 mm, every 2nd) automatically when pa_step <= 0.002 or when normal doesn't fit;
+    -- Ultra-dense (2.0 mm, every 5th) when even dense doesn't fit all requested lines.
+    local tiers
+    if not S.draw_labels then
+        tiers = {{3.0, 1}, {2.0, 1}}
+    elseif S.pa_step <= M.LINES_FINE_STEP + 1e-9 then
+        tiers = {{3.0, 2}, {2.0, 5}}
+    else
+        tiers = {{5.2, 1}, {3.0, 2}, {2.0, 5}}
+    end
+
+    local placed, n, clamped, pitch_y, label_every = nil, n_req, false, nil, nil
+    for _, tier in ipairs(tiers) do
+        local ty_pitch, ty_every = tier[1], tier[2]
+        local req_span_y = (n_req - 1) * ty_pitch
+        if can_above_x and req_span_y <= usable_above_y + 1e-9 then
+            placed, pitch_y, label_every = "above", ty_pitch, ty_every
+            break
+        elseif can_right_x and req_span_y <= usable_right_y + 1e-9 then
+            placed, pitch_y, label_every = "right", ty_pitch, ty_every
+            break
+        end
+    end
+
+    -- Still too many lines even in the densest tier: clamp on the side with more Y room
+    if not placed then
+        local densest = tiers[#tiers]
+        pitch_y, label_every = densest[1], densest[2]
+        clamped = true
+        if can_right_x and usable_right_y >= usable_above_y then
+            placed = "right"
+            n = math.min(n_req, math.max(2, math.floor(usable_right_y / pitch_y) + 1))
+        else
+            placed = "above"
+            n = math.min(n_req, math.max(2, math.floor(usable_above_y / pitch_y) + 1))
+        end
+    end
+
+    L.pitch_y = pitch_y
+    L.label_every = label_every
+    L.clamped = clamped
+    L.num_lines = n
+    L.span_y = (n - 1) * L.pitch_y
+    L.frame_h = L.span_y + 2 * L.pad_y
+
+    if placed == "above" then
         L.min_x = cx - L.span_x / 2
         L.prime_y = above_prime_y
         L.frame_min_y = L.prime_y + M.PRIME_GAP
         L.min_y = L.frame_min_y + L.pad_y
-    elseif right_x + L.span_x <= S.bed_w - M.MARGIN then
-        L.min_x = right_x
-        L.min_y = cy - L.span_y / 2
-        while n > 2 and (L.min_y - L.pad_y - M.PRIME_GAP < M.MARGIN or L.min_y + L.span_y + L.pad_y > S.bed_d - M.MARGIN) do
-            n = n - 1
-            L.span_y = (n - 1) * L.pitch_y
-            L.frame_h = L.span_y + 2 * L.pad_y
-            L.min_y = cy - L.span_y / 2
-            L.clamped = true
-        end
-        L.frame_min_y = L.min_y - L.pad_y
-        L.prime_y = L.frame_min_y - M.PRIME_GAP
     else
-        L.min_x = cx - L.span_x / 2
-        L.prime_y = above_prime_y
+        L.min_x = right_x
+        local total_y = M.PRIME_GAP + L.frame_h
+        L.prime_y = cy - total_y / 2
         L.frame_min_y = L.prime_y + M.PRIME_GAP
-        while n > 2 and (L.frame_min_y + L.frame_h > S.bed_d - M.MARGIN) do
-            n = n - 1
-            L.span_y = (n - 1) * L.pitch_y
-            L.frame_h = L.span_y + 2 * L.pad_y
-            L.clamped = true
-        end
         L.min_y = L.frame_min_y + L.pad_y
     end
 
-    L.num_lines = n
     L.max_x = L.min_x + L.span_x
     L.max_y = L.min_y + L.span_y
     return L
@@ -396,22 +428,24 @@ function M.build_lines(S)
             -- Tisk čísel pouze ve 2. vrstvě (výška max 1 vrstva, tloušťka 2 perimetry), bez 2. vrstvy rámečku
             draw.emit(w, firmware.set_pressure_advance(S.flavor, 0))
 
-            local glyph_h = 4.0 * M.GLYPH_SCALE
+            local gscale = L.glyph_scale or M.LINES_GLYPH_SCALE
+            local glyph_h = 4.0 * gscale
+            local label_every = L.label_every or 1
             local opts = {
                 epm = epm_glyph,
                 speed = M.GLYPH_SPEED,
                 layer_z = z,
                 horizontal = true,
-                scale = M.GLYPH_SCALE,
+                scale = gscale,
                 line_width = L.lw,
                 layer_height = L.h,
                 perimeters = 2,
             }
-            for j = 0, L.num_lines - 1 do
+            for j = 0, L.num_lines - 1, label_every do
                 local pa = S.pa_start + j * S.pa_step
                 local y = L.min_y + j * L.pitch_y
                 local x = L.min_x + L.line_span_x
-                draw.draw_number(w, x + 2.5, y - glyph_h / 2, draw.fmt_value(pa), opts)
+                draw.draw_number(w, x + 2.0, y - glyph_h / 2, draw.fmt_value(pa), opts)
             end
         end
 
