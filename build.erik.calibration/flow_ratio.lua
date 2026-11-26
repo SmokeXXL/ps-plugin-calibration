@@ -9,6 +9,7 @@ info = {
     params = {
         {name = "tool", label = "Extruder / Tool (1 = T0, 2 = T1...)", type = "int", default = 1},
         {name = "use_monotonic", label = "Zigzag Top Fill (off = Archimedean)", type = "bool", default = true},
+        {name = "sparse_infill", label = "Sparse Infill Cushion (20%, 10 layers; off = 5 solid)", type = "bool", default = true},
         {name = "draw_labels", label = "Print Labels", type = "bool", default = true},
         {name = "nozzle", label = "Nozzle [mm] (0 = auto)", type = "string", default = "0"},
         {name = "layer_height", label = "Layer Height [mm] (0 = auto)", type = "string", default = "0"},
@@ -47,6 +48,7 @@ function execute(opts)
     local S = {
         tool_idx = tool_idx,
         slot_idx = slot_idx,
+        sparse_infill = (opts.sparse_infill ~= false),
         draw_labels = (opts.draw_labels ~= false),
         start_flow = util.parse_number(opts.start_flow, 0.95),
         count = math.max(1, opts.count or 11),
@@ -121,6 +123,7 @@ function execute(opts)
     }
 
     print(string.format(
-        "Flow Ratio: Tool T%d, %d pads, labels=%s, flow %.3f..%.3f (step %.3f), pattern %s",
-        S.slot_idx, S.count, tostring(S.draw_labels), r.v_min, r.v_max, S.step, S.pattern))
+        "Flow Ratio: Tool T%d, %d pads, %d layers (sparse=%s), labels=%s, flow %.3f..%.3f (step %.3f), pattern %s",
+        S.slot_idx, S.count, #r.layers, tostring(S.sparse_infill),
+        tostring(S.draw_labels), r.v_min, r.v_max, S.step, S.pattern))
 end

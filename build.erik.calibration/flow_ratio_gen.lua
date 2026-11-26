@@ -16,7 +16,13 @@ M.TAB_H = 7.0
 M.TAB_LAYERS = 2
 M.GAP = 6.0
 M.COLS = 4
-M.LAYERS = 5               -- same ~1.0 mm calibration pad height as Ironing (at 0.2 mm layer height)
+M.LAYERS = 10              -- default 2.0 mm pad height at 0.2 mm layer height (3 bottom + 2 sparse + 5 top)
+M.PERIMETERS = 2           -- rigid 2-wall shell around sparse infill cushion
+M.SPARSE_INFILL_DENSITY = 0.20
+M.BOTTOM_MIN_MM = 0.60
+M.SPARSE_MIN_MM = 0.40
+M.TOP_MIN_MM = 1.00
+M.SOLID_MIN_MM = 1.00
 M.MARGIN = 10.0
 M.HANDLE_XY = 5.0
 M.CLEARANCE = 3.0          -- gap between the centered handle cube and the grid [mm]
@@ -34,6 +40,58 @@ function M.resolve_speed(requested, perimeter_speed, vol_cap, line_width, layer_
     end
     return math.floor(speed)
 end
+
+--- Build a layer plan scaled to layer_height.
+--- With use_sparse = true (default): >= 0.6 mm bottom solid (min 3 layers),
+--- >= 0.4 mm sparse 20% infill cushion (min 2 layers) so over-extrusion from
+--- bottom layers does not accumulate upward, and >= 1.0 mm top solid shell
+--- (min 4 layers, 5 at 0.20 mm) so the top evaluation surface bridges cleanly.
+--- With use_sparse = false: fast solid stack (>= 1.0 mm, min 5 layers).
+function M.build_layer_plan(layer_height, use_sparse)
+    local h = (layer_height and layer_height > 0) and layer_height or 0.2
+    local plan = {}
+    local function add_layer(role, width, density)
+        local idx = #plan + 1
+        local angle = (idx % 2 == 1) and 45 or 135
+        table.insert(plan, {
+            role = role,
+            width = width,
+            angle = angle,
+            density = density,
+        })
+    end
+
+    if use_sparse ~= false then
+        local n_bottom = math.max(3, math.ceil(M.BOTTOM_MIN_MM / h - 1e-9))
+        local n_sparse = math.max(2, math.ceil(M.SPARSE_MIN_MM / h - 1e-9))
+        local n_top = math.max(4, math.ceil(M.TOP_MIN_MM / h - 1e-9))
+
+        for k = 1, n_bottom do
+            add_layer("bottom", (k == 1) and "first" or "solid")
+        end
+        for _ = 1, n_sparse do
+            add_layer("sparse", "solid", M.SPARSE_INFILL_DENSITY)
+        end
+        for k = 1, n_top do
+            add_layer((k == n_top) and "top" or "solid", "solid")
+        end
+    else
+        local total = math.max(5, math.ceil(M.SOLID_MIN_MM / h - 1e-9))
+        for k = 1, total do
+            if k == 1 then
+                add_layer("bottom", "first")
+            elseif k == total then
+                add_layer("top", "solid")
+            else
+                add_layer("solid", "solid")
+            end
+        end
+    end
+    return plan
+end
+
+-- Default 10-layer plan for 0.20 mm layer height (3 bottom + 2 sparse 20% + 5 top).
+M.LAYER_PLAN = M.build_layer_plan(0.2, true)
 
 function M.layout(S)
     local L = {}
@@ -123,17 +181,8 @@ function M.layout(S)
     return L
 end
 
--- 5 solid alternating layers (1.0 mm at 0.2 mm layer height), matching Ironing.
-M.LAYER_PLAN = {
-    {role = "bottom", width = "first", angle = 45},
-    {role = "solid",  width = "solid", angle = 135},
-    {role = "solid",  width = "solid", angle = 45},
-    {role = "solid",  width = "solid", angle = 135},
-    {role = "top",    width = "solid", angle = 45},
-}
-
-function M.draw_pad(w, pad, i, S, L, speed)
-    local plan = M.LAYER_PLAN[i]
+function M.draw_pad(w, pad, i, S, L, speed, plan)
+    plan = plan or M.LAYER_PLAN[i]
     local z = i * L.h
     local width = L.width[plan.width]
     local wall_w = (i == 1) and L.width.first or L.width.wall
@@ -147,17 +196,22 @@ function M.draw_pad(w, pad, i, S, L, speed)
     elseif plan.role == "top" then
         fill_speed = math.floor(speed * M.TOP_SPEED_FRACTION)
     end
+    local perimeters = M.PERIMETERS
     draw.draw_box(w, pad.x0, pad.y0, M.PAD_W, M.PAD_H,
-                  {perimeters = 1, line_width = wall_w, layer_height = L.h,
+                  {perimeters = perimeters, line_width = wall_w, layer_height = L.h,
                    epm = epm_wall, speed = wall_speed, layer_z = z,
                    fill = false})
     local wall_spacing = wall_w - L.h * (1 - math.pi / 4)
-    local fx, fy = pad.x0 + wall_spacing, pad.y0 + wall_spacing
-    local fsz_x = M.PAD_W - 2 * wall_spacing
-    local fsz_y = M.PAD_H - 2 * wall_spacing
+    local fx, fy = pad.x0 + perimeters * wall_spacing, pad.y0 + perimeters * wall_spacing
+    local fsz_x = M.PAD_W - 2 * perimeters * wall_spacing
+    local fsz_y = M.PAD_H - 2 * perimeters * wall_spacing
     local opts = {line_width = width, layer_height = L.h, epm = epm,
                   speed = fill_speed, layer_z = z, angle = plan.angle}
-    if plan.role == "top" and S.pattern == "archimedean" then
+    if plan.role == "sparse" then
+        local solid_spacing = width - L.h * (1 - math.pi / 4)
+        opts.spacing = solid_spacing / (plan.density or M.SPARSE_INFILL_DENSITY)
+        draw.fill_zigzag(w, fx, fy, fsz_x, fsz_y, opts)
+    elseif plan.role == "top" and S.pattern == "archimedean" then
         draw.fill_archimedean_chords(w, fx, fy, fsz_x, fsz_y, opts)
     else
         draw.fill_zigzag(w, fx, fy, fsz_x, fsz_y, opts)
@@ -195,18 +249,21 @@ end
 
 function M.build(S)
     local L = M.layout(S)
+    local layer_plan = M.build_layer_plan(L.h, S.sparse_infill ~= false)
+    local total_layers = #layer_plan
     local vol_cap = (S.vol_cap and S.vol_cap > 0) and S.vol_cap / L.v_max or 0
     local speed = M.resolve_speed(S.speed, S.perimeter_speed, vol_cap,
                                   L.width.solid, L.h)
     local layers = {}
     local entry = draw.writer_opts(S)
-    for i = 1, M.LAYERS do
+    for i = 1, total_layers do
+        local plan = layer_plan[i]
         local w = draw.new(entry)
-        draw.emit(w, string.format("; FLOW_RATIO layer %d", i))
+        draw.emit(w, string.format("; FLOW_RATIO layer %d/%d (%s)", i, total_layers, plan.role))
         draw.emit(w, "G90")
         draw.emit(w, "M83")
         for _, pad in ipairs(L.pads) do
-            M.draw_pad(w, pad, i, S, L, speed)
+            M.draw_pad(w, pad, i, S, L, speed, plan)
         end
         draw.emit(w, "; park over the handle")
         draw.park_at(w, S.bed_w / 2, S.bed_d / 2, i * L.h)
@@ -216,7 +273,7 @@ function M.build(S)
                               gcode = draw.gcode(w)})
     end
     return {
-        handle = {size_xy = M.HANDLE_XY, height = M.LAYERS * L.h},
+        handle = {size_xy = M.HANDLE_XY, height = total_layers * L.h},
         pads = L.pads,
         layers = layers,
         speed = speed,

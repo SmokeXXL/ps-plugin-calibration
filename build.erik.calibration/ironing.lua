@@ -8,6 +8,7 @@ info = {
     menu = "Calibration/Ironing",
     params = {
         {name = "tool", label = "Extruder / Tool (1 = T0, 2 = T1...)", type = "int", default = 1},
+        {name = "realistic_base", label = "Realistic Base w/ 20% Infill (off = fast 5 solid)", type = "bool", default = true},
         {name = "draw_labels", label = "Print Labels", type = "bool", default = true},
         {name = "nozzle", label = "Nozzle [mm] (0 = auto)", type = "string", default = "0"},
         {name = "layer_height", label = "Layer Height [mm] (0 = auto)", type = "string", default = "0"},
@@ -47,6 +48,7 @@ function execute(opts)
     local S = {
         tool_idx = tool_idx,
         slot_idx = slot_idx,
+        realistic_base = (opts.realistic_base ~= false),
         draw_labels = (opts.draw_labels ~= false),
         flow_start = util.parse_number(opts.flow_start, 10),
         flow_step = util.parse_number(opts.flow_step, 5),
@@ -127,8 +129,8 @@ function execute(opts)
     }
 
     print(string.format(
-        "Ironing: Tool T%d, %dx%d grid, labels=%s, flow %g..%g%% (step %g%%), speed %g..%g mm/s (step %g), spacing %.2f mm",
-        S.slot_idx, S.flow_count, S.speed_count, tostring(S.draw_labels),
-        r.flow_min, r.flow_max, S.flow_step,
+        "Ironing: Tool T%d, %dx%d grid, %d layers (realistic=%s), labels=%s, flow %g..%g%% (step %g%%), speed %g..%g mm/s (step %g), spacing %.2f mm",
+        S.slot_idx, S.flow_count, S.speed_count, #r.layers, tostring(S.realistic_base),
+        tostring(S.draw_labels), r.flow_min, r.flow_max, S.flow_step,
         r.speed_min, r.speed_max, S.speed_step, S.spacing))
 end

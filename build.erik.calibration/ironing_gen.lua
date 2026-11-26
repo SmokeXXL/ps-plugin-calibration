@@ -11,7 +11,13 @@ M.TAB_W = 24.0
 M.TAB_H = 7.0
 M.TAB_LAYERS = 2
 M.GAP = 6.0
-M.LAYERS = 5               -- standard ~1.0 mm calibration pad height at 0.2 mm layer height
+M.LAYERS = 10              -- default 2.0 mm realistic pad height at 0.2 mm (3 bottom + 2 sparse 20% + 5 top)
+M.PERIMETERS = 2           -- rigid 2-wall shell around sparse infill cushion
+M.SPARSE_INFILL_DENSITY = 0.20
+M.BOTTOM_MIN_MM = 0.60
+M.SPARSE_MIN_MM = 0.40
+M.TOP_MIN_MM = 1.00        -- >= 1.0 mm top shell prevents thermal pillowing during slow ironing
+M.SOLID_MIN_MM = 1.00
 M.MARGIN = 10.0
 M.HANDLE_XY = 5.0
 M.CLEARANCE = 3.0          -- gap between the centered handle cube and the grid [mm]
@@ -34,6 +40,57 @@ end
 local function fmt_compact(v)
     return string.format("%.3g", v)
 end
+
+--- Build a layer plan scaled to layer_height.
+--- With realistic_base = true (default): >= 0.6 mm bottom solid (min 3 layers),
+--- >= 0.4 mm sparse 20% infill (min 2 layers), and >= 1.0 mm top solid shell
+--- (min 5 layers at 0.20 mm) to reflect real printed parts and resist pillowing.
+--- With realistic_base = false: fast 100% solid stack (>= 1.0 mm, min 5 layers).
+function M.build_layer_plan(layer_height, realistic_base)
+    local h = (layer_height and layer_height > 0) and layer_height or 0.2
+    local plan = {}
+    local function add_layer(role, width, density)
+        local idx = #plan + 1
+        local angle = (idx % 2 == 1) and 45 or 135
+        table.insert(plan, {
+            role = role,
+            width = width,
+            angle = angle,
+            density = density,
+        })
+    end
+
+    if realistic_base ~= false then
+        local n_bottom = math.max(3, math.ceil(M.BOTTOM_MIN_MM / h - 1e-9))
+        local n_sparse = math.max(2, math.ceil(M.SPARSE_MIN_MM / h - 1e-9))
+        local n_top = math.max(4, math.ceil(M.TOP_MIN_MM / h - 1e-9))
+
+        for k = 1, n_bottom do
+            add_layer("bottom", (k == 1) and "first" or "solid")
+        end
+        for _ = 1, n_sparse do
+            add_layer("sparse", "solid", M.SPARSE_INFILL_DENSITY)
+        end
+        for k = 1, n_top do
+            add_layer((k == n_top) and "top" or "solid", "solid")
+        end
+    else
+        local total = math.max(5, math.ceil(M.SOLID_MIN_MM / h - 1e-9))
+        for k = 1, total do
+            if k == 1 then
+                add_layer("bottom", "first")
+            elseif k == total then
+                add_layer("top", "solid")
+            else
+                add_layer("solid", "solid")
+            end
+        end
+    end
+    return plan
+end
+
+-- Default 10-layer realistic plan for 0.20 mm layer height (3 bottom + 2 sparse 20% + 5 top).
+M.LAYER_PLAN = M.build_layer_plan(0.2, true)
 
 function M.layout(S)
     local L = {}
@@ -143,24 +200,14 @@ function M.layout(S)
     return L
 end
 
--- 5 solid alternating layers (1.0 mm at 0.2 mm layer height):
--- flat rigid base without sparse-infill pillowing, fast to print.
-M.LAYER_PLAN = {
-    {role = "bottom", width = "first", angle = 45},
-    {role = "solid",  width = "solid", angle = 135},
-    {role = "solid",  width = "solid", angle = 45},
-    {role = "solid",  width = "solid", angle = 135},
-    {role = "top",    width = "solid", angle = 45},
-}
-
 function M.ironing_epm(draw, nozzle, layer_height, spacing, filament_d, base_flow_mult, iron_flow_pct)
     local normal_spacing = nozzle - layer_height * (1 - math.pi / 4)
     local effective_mult = base_flow_mult * (iron_flow_pct / 100.0) * (spacing / normal_spacing)
     return draw.e_per_mm(nozzle, layer_height, filament_d, effective_mult)
 end
 
-function M.draw_pad(draw, w, pad, i, S, L, speed)
-    local plan = M.LAYER_PLAN[i]
+function M.draw_pad(draw, w, pad, i, S, L, speed, plan)
+    plan = plan or M.LAYER_PLAN[i]
     local z = i * L.h
     local width = L.width[plan.width]
     local wall_w = (i == 1) and L.width.first or L.width.wall
@@ -177,28 +224,35 @@ function M.draw_pad(draw, w, pad, i, S, L, speed)
         fill_speed = math.floor(speed * M.TOP_SPEED_FRACTION)
     end
 
+    local perimeters = M.PERIMETERS
     draw.draw_box(w, pad.x0, pad.y0, M.PAD_W, M.PAD_H,
-                  {perimeters = 1, line_width = wall_w, layer_height = L.h,
+                  {perimeters = perimeters, line_width = wall_w, layer_height = L.h,
                    epm = epm_wall, speed = wall_speed, layer_z = z,
                    fill = false})
 
     local wall_spacing = wall_w - L.h * (1 - math.pi / 4)
-    local fx, fy = pad.x0 + wall_spacing, pad.y0 + wall_spacing
-    local fsz_x = M.PAD_W - 2 * wall_spacing
-    local fsz_y = M.PAD_H - 2 * wall_spacing
-    draw.fill_zigzag(w, fx, fy, fsz_x, fsz_y, {
+    local fx, fy = pad.x0 + perimeters * wall_spacing, pad.y0 + perimeters * wall_spacing
+    local fsz_x = M.PAD_W - 2 * perimeters * wall_spacing
+    local fsz_y = M.PAD_H - 2 * perimeters * wall_spacing
+    local fill_opts = {
         line_width = width,
         layer_height = L.h,
         epm = epm,
         speed = fill_speed,
         layer_z = z,
         angle = plan.angle,
-    })
+    }
+    if plan.role == "sparse" then
+        local solid_spacing = width - L.h * (1 - math.pi / 4)
+        fill_opts.spacing = solid_spacing / (plan.density or M.SPARSE_INFILL_DENSITY)
+    end
+    draw.fill_zigzag(w, fx, fy, fsz_x, fsz_y, fill_opts)
 
-    -- Ironing pass right after the top solid layer is completed
+    -- Ironing pass right after the top solid layer is completed (always perpendicular to top fill)
     if plan.role == "top" then
-        draw.emit(w, string.format("; IRONING pass: speed %g mm/s, flow %g%%, spacing %.3f mm",
-                                   pad.iron_speed, pad.iron_flow, S.spacing))
+        local iron_angle = (plan.angle == 45) and 135 or 45
+        draw.emit(w, string.format("; IRONING pass: speed %g mm/s, flow %g%%, spacing %.3f mm, angle %d",
+                                   pad.iron_speed, pad.iron_flow, S.spacing, iron_angle))
         local inset = S.nozzle * M.IRONING_INSET_FRACTION
         local ix = pad.x0 + inset
         local iy = pad.y0 + inset
@@ -213,7 +267,7 @@ function M.draw_pad(draw, w, pad, i, S, L, speed)
             epm = epm_iron,
             speed = pad.iron_speed,
             layer_z = z,
-            angle = 135,
+            angle = iron_angle,
         })
     end
 
@@ -251,6 +305,8 @@ end
 function M.build(S)
     local draw = require("draw")
     local L = M.layout(S)
+    local layer_plan = M.build_layer_plan(L.h, S.realistic_base ~= false)
+    local total_layers = #layer_plan
     local base_mult = S.flow_mult or 1.0
     local vol_cap = (S.vol_cap and S.vol_cap > 0) and S.vol_cap / base_mult or 0
     local speed = M.resolve_speed(draw, S.speed, S.perimeter_speed, vol_cap,
@@ -258,13 +314,14 @@ function M.build(S)
     local layers = {}
     local entry = draw.writer_opts(S)
 
-    for i = 1, M.LAYERS do
+    for i = 1, total_layers do
+        local plan = layer_plan[i]
         local w = draw.new(entry)
-        draw.emit(w, string.format("; IRONING_CALIBRATION layer %d", i))
+        draw.emit(w, string.format("; IRONING_CALIBRATION layer %d/%d (%s)", i, total_layers, plan.role))
         draw.emit(w, "G90")
         draw.emit(w, "M83")
         for _, pad in ipairs(L.pads) do
-            M.draw_pad(draw, w, pad, i, S, L, speed)
+            M.draw_pad(draw, w, pad, i, S, L, speed, plan)
         end
         draw.emit(w, "; park over the handle")
         draw.park_at(w, S.bed_w / 2, S.bed_d / 2, i * L.h)
@@ -277,7 +334,7 @@ function M.build(S)
     end
 
     return {
-        handle = {size_xy = M.HANDLE_XY, height = M.LAYERS * L.h},
+        handle = {size_xy = M.HANDLE_XY, height = total_layers * L.h},
         pads = L.pads,
         layers = layers,
         speed = speed,
