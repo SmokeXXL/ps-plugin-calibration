@@ -170,4 +170,30 @@ function M.parse_number(s, default)
     return v
 end
 
+--- Add the calibration handle object(s) to the bed.
+--- Supports either a single centered cube or two symmetric cubes (handle.dual = true)
+--- spaced by (handle.dx, handle.dy) via other_volumes so PrusaSlicer centers their
+--- combined bounding box on the bed center and places both cubes exactly 3 mm
+--- outside a centered calibration pattern.
+function M.add_handle(handle, tool_idx)
+    local sz = handle.size_xy or 4.0
+    local h = handle.height
+    local args = {
+        mesh = api.make_cube(sz, sz, h),
+        type = VolumeType.Solid,
+        extruder = tool_idx,
+    }
+    if handle.dual then
+        args.other_volumes = {
+            {
+                mesh = api.make_cube(sz, sz, h),
+                type = VolumeType.Solid,
+                extruder = tool_idx,
+                translate = {x = handle.dx or 0, y = handle.dy or 0, z = 0},
+            },
+        }
+    end
+    return api.project:add_object(args)
+end
+
 return M

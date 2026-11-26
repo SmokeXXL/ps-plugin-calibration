@@ -19,7 +19,7 @@ M.SPARSE_MIN_MM = 0.40
 M.TOP_MIN_MM = 1.00        -- >= 1.0 mm top shell prevents thermal pillowing during slow ironing
 M.SOLID_MIN_MM = 1.00
 M.MARGIN = 10.0
-M.HANDLE_XY = 5.0
+M.HANDLE_XY = 4.0
 M.CLEARANCE = 3.0          -- gap between the centered handle cube and the grid [mm]
 M.FIRST_LAYER_SPEED = 30
 M.GLYPH_SPEED = 20
@@ -149,6 +149,11 @@ function M.layout(S)
                             and (cy + L.span_y / 2 <= S.bed_d - M.MARGIN)
 
     local row_y = {}
+    L.handle_dual = false
+    L.handle_dx = 0
+    L.handle_dy = 0
+    L.park_x = cx
+    L.park_y = cy
     if fits_x_centered and (above_y + L.span_y <= S.bed_d - M.MARGIN) then
         L.xbase = cx - L.span_x / 2
         L.ybase = above_y
@@ -166,21 +171,25 @@ function M.layout(S)
         L.ybase = cy - L.span_y / 2
         for r = 0, L.rows - 1 do row_y[r] = L.ybase + r * L.pitch_y end
     else
-        -- Single 12 mm corridor around the centered handle cube; normal M.GAP elsewhere.
-        local corridor = math.max(M.GAP, M.HANDLE_XY + 2 * M.CLEARANCE + 1.0)
-        local rows_below = L.rows // 2
-        local below_top = cy - corridor / 2
-        local above_bot = cy + corridor / 2
-        for r = 0, rows_below - 1 do
-            row_y[r] = below_top - (rows_below - r) * cell_h - (rows_below - 1 - r) * M.GAP
-        end
-        for r = rows_below, L.rows - 1 do
-            local k = r - rows_below
-            row_y[r] = above_bot + k * L.pitch_y
-        end
+        -- Grid too large for any single side: center the entire unsplit grid on the bed
+        -- and place two compact 4x4 mm handle cubes symmetrically 3 mm outside the grid.
         L.xbase = cx - L.span_x / 2
-        L.ybase = row_y[0]
-        L.span_y = (row_y[L.rows - 1] + cell_h) - row_y[0]
+        L.ybase = cy - L.span_y / 2
+        for r = 0, L.rows - 1 do row_y[r] = L.ybase + r * L.pitch_y end
+        L.handle_dual = true
+        local ab_edge = L.ybase - M.CLEARANCE - M.HANDLE_XY
+        local lr_edge = L.xbase - M.CLEARANCE - M.HANDLE_XY
+        if ab_edge >= lr_edge then
+            L.handle_dx = 0
+            L.handle_dy = L.span_y + 2 * M.CLEARANCE + M.HANDLE_XY
+            L.park_x = cx
+            L.park_y = L.ybase + L.span_y + M.CLEARANCE + M.HANDLE_XY / 2
+        else
+            L.handle_dx = L.span_x + 2 * M.CLEARANCE + M.HANDLE_XY
+            L.handle_dy = 0
+            L.park_x = L.xbase + L.span_x + M.CLEARANCE + M.HANDLE_XY / 2
+            L.park_y = cy
+        end
     end
 
     L.extents = {
@@ -189,9 +198,15 @@ function M.layout(S)
         max_x = L.xbase + L.span_x,
         max_y = L.ybase + L.span_y,
     }
+    local h_min_x = L.handle_dual and (cx - L.handle_dx / 2 - M.HANDLE_XY / 2) or (cx - M.HANDLE_XY / 2)
+    local h_max_x = L.handle_dual and (cx + L.handle_dx / 2 + M.HANDLE_XY / 2) or (cx + M.HANDLE_XY / 2)
+    local h_min_y = L.handle_dual and (cy - L.handle_dy / 2 - M.HANDLE_XY / 2) or (cy - M.HANDLE_XY / 2)
+    local h_max_y = L.handle_dual and (cy + L.handle_dy / 2 + M.HANDLE_XY / 2) or (cy + M.HANDLE_XY / 2)
     L.fits = L.extents.min_x >= M.MARGIN and L.extents.min_y >= M.MARGIN
              and L.extents.max_x <= S.bed_w - M.MARGIN
              and L.extents.max_y <= S.bed_d - M.MARGIN
+             and h_min_x >= 5.0 and h_min_y >= 5.0
+             and h_max_x <= S.bed_w - 5.0 and h_max_y <= S.bed_d - 5.0
 
     L.pads = {}
     for r = 0, L.rows - 1 do
@@ -215,7 +230,7 @@ function M.layout(S)
                 iron_speed = ir_speed,
                 label = label,
                 tab_x0 = x0 + (M.PAD_W - M.TAB_W) / 2,
-                tab_y0 = y0 + M.PAD_H - L.width.wall,
+                tab_y0 = y0 + M.PAD_H,
             })
         end
     end
@@ -247,15 +262,25 @@ function M.draw_pad(draw, w, pad, i, S, L, speed, plan)
     end
 
     local perimeters = M.PERIMETERS
-    draw.draw_box(w, pad.x0, pad.y0, M.PAD_W, M.PAD_H,
-                  {perimeters = perimeters, line_width = wall_w, layer_height = L.h,
-                   epm = epm_wall, speed = wall_speed, layer_z = z,
-                   fill = false})
-
     local wall_spacing = wall_w - L.h * (1 - math.pi / 4)
-    local fx, fy = pad.x0 + perimeters * wall_spacing, pad.y0 + perimeters * wall_spacing
-    local fsz_x = M.PAD_W - 2 * perimeters * wall_spacing
-    local fsz_y = M.PAD_H - 2 * perimeters * wall_spacing
+    local unified_tab = L.draw_labels and (i <= M.TAB_LAYERS)
+    if unified_tab then
+        -- Print pad + label tab as ONE unified T-shaped contour (zero overlap)
+        draw.draw_t_box(w, pad.x0, pad.y0, M.PAD_W, M.PAD_H,
+                        pad.tab_x0, M.TAB_W, M.TAB_H,
+                        {perimeters = perimeters, line_width = wall_w, layer_height = L.h,
+                         epm = epm_wall, speed = wall_speed, layer_z = z})
+    else
+        draw.draw_box(w, pad.x0, pad.y0, M.PAD_W, M.PAD_H,
+                      {perimeters = perimeters, line_width = wall_w, layer_height = L.h,
+                       epm = epm_wall, speed = wall_speed, layer_z = z,
+                       fill = false})
+    end
+
+    local pad_inset = perimeters * wall_spacing
+    local fx, fy = pad.x0 + pad_inset, pad.y0 + pad_inset
+    local fsz_x = M.PAD_W - 2 * pad_inset
+    local fsz_y = M.PAD_H - 2 * pad_inset
     local fill_opts = {
         line_width = width,
         layer_height = L.h,
@@ -293,14 +318,12 @@ function M.draw_pad(draw, w, pad, i, S, L, speed, plan)
         })
     end
 
-    -- Optional label tab and 7-segment numbers (height 1 layer, thickness 2 perimeters)
+    -- Seamless non-overlapping tab fill inside the unified T-perimeter on layers 1..TAB_LAYERS,
+    -- followed by 7-segment numbers on layer TAB_LAYERS + 1.
     if L.draw_labels then
-        if i <= M.TAB_LAYERS then
-            draw.draw_box(w, pad.tab_x0, pad.tab_y0, M.TAB_W,
-                          M.TAB_H + L.width.wall,
-                          {perimeters = 1, line_width = wall_w, layer_height = L.h,
-                           epm = epm_wall, speed = wall_speed, layer_z = z,
-                           fill = true})
+        if unified_tab then
+            draw.fill_zigzag(w, pad.tab_x0 + pad_inset, pad.y0 + M.PAD_H - pad_inset,
+                             M.TAB_W - 2 * pad_inset, M.TAB_H, fill_opts)
         elseif i == M.TAB_LAYERS + 1 then
             draw.emit(w, string.format("; LABEL %s", pad.label))
             local glyph_w = L.width.wall
@@ -309,7 +332,7 @@ function M.draw_pad(draw, w, pad, i, S, L, speed, plan)
             local max_w = M.TAB_W - 2.0
             local scale = math.min(1.0, max_w / raw_w)
             local ox = pad.tab_x0 + (M.TAB_W - raw_w * scale) / 2
-            local oy = pad.tab_y0 + L.width.wall + (M.TAB_H - 4.0 * scale) / 2
+            local oy = pad.tab_y0 + (M.TAB_H - 4.0 * scale) / 2
             draw.draw_number(w, ox, oy, pad.label, {
                 epm = epm_glyph,
                 speed = M.GLYPH_SPEED,
@@ -346,7 +369,7 @@ function M.build(S)
             M.draw_pad(draw, w, pad, i, S, L, speed, plan)
         end
         draw.emit(w, "; park over the handle")
-        draw.park_at(w, S.bed_w / 2, S.bed_d / 2, i * L.h)
+        draw.park_at(w, L.park_x, L.park_y, i * L.h)
         if not entry.retracted then draw.unretract(w) end
         table.insert(layers, {
             z = i * L.h,
@@ -356,7 +379,7 @@ function M.build(S)
     end
 
     return {
-        handle = {size_xy = M.HANDLE_XY, height = total_layers * L.h},
+        handle = {size_xy = M.HANDLE_XY, height = total_layers * L.h, dual = L.handle_dual, dx = L.handle_dx, dy = L.handle_dy},
         pads = L.pads,
         layers = layers,
         speed = speed,

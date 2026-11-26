@@ -125,11 +125,7 @@ function execute(opts)
         api.project:insert_layer_custom_gcode(bed, layer.insert_z, layer.gcode)
     end
 
-    api.project:add_object{
-        mesh = api.make_cube(gen.HANDLE_XY, gen.HANDLE_XY, r.handle.height),
-        type = VolumeType.Solid,
-        extruder = S.tool_idx,
-    }
+    util.add_handle(r.handle, S.tool_idx)
 
     print(string.format(
         "Ironing: Tool T%d, %dx%d grid, %d layers (realistic=%s), labels=%s, flow %g..%g%% (step %g%%), speed %g..%g mm/s (step %g), spacing %.2f mm",

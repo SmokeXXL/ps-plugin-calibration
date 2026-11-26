@@ -8,7 +8,7 @@ local firmware = setmetatable({}, {__index = function(_, k) return require("firm
 
 local M = {}
 
-M.HANDLE_XY = 5.0          -- handle cube footprint [mm]
+M.HANDLE_XY = 4.0          -- handle cube footprint [mm]
 M.LAYERS = 4               -- pattern layers (Ellis)
 M.LEG = 30.0               -- chevron leg length [mm]
 M.WALLS = 3                -- nested walls per chevron / frame perimeters
@@ -74,8 +74,9 @@ function M.layout_ellis(S)
     L.frame_pad = L.wall_band + M.GLYPH_PAD
 
     L.frame_h = 2 * L.dy
+    L.tab_gap = (S.draw_labels and S.draw_frame) and spacing_first or 0
     L.tab_h = S.draw_labels and (5 * 3.0 * M.GLYPH_SCALE + 2 * M.GLYPH_PAD) or 0
-    local total_h = L.frame_h + L.tab_h
+    local total_h = L.frame_h + L.tab_gap + L.tab_h
 
     -- The handle cube is placed at the bed center (bed_w/2, bed_d/2) by PrusaSlicer.
     -- Position the pattern dynamically around it so the cube always stays outside:
@@ -114,7 +115,7 @@ function M.layout_ellis(S)
         L.frame_min_x = cx + M.HANDLE_XY / 2 + M.CLEARANCE + M.PRIME_GAP
     end
     L.prime_x = L.frame_min_x - M.PRIME_GAP
-    L.tab_min_y = L.frame_min_y + L.frame_h
+    L.tab_min_y = L.frame_min_y + L.frame_h + L.tab_gap
     L.pat_min_x = L.frame_min_x + L.frame_pad
     L.pat_min_y = L.frame_min_y
 
@@ -252,30 +253,26 @@ function M.layout_lines(S)
     L.h = S.layer_height
     L.slow_len = 20.0
     L.fast_len = 40.0
-    L.line_span_x = L.slow_len * 2 + L.fast_len
-    L.pad_y = 4.0              -- přesah rámečku nad první a pod poslední linkou
+    L.line_span_y = L.slow_len * 2 + L.fast_len  -- 80 mm vertical calibration lines (along Y)
+    L.pad_x = 4.0                                 -- frame overhang left & right of first/last line
     L.layers = S.draw_labels and 2 or 1
     L.glyph_scale = M.LINES_GLYPH_SCALE
 
     local spacing_first = L.lw_first - L.h * (1 - math.pi / 4)
+    L.spacing_first = spacing_first
     L.wall_band = M.WALLS * spacing_first
 
     local n_req = math.ceil((S.pa_end - S.pa_start) / S.pa_step - 1e-9) + 1
-    L.label_w = 19.0           -- fits 5-char numbers at scale 1.0 (~13 mm) + padding
-    L.span_x = L.line_span_x + (S.draw_labels and L.label_w or 0)
+    L.label_h = 18.0           -- height of label strip above lines (fits 5-char numbers @ scale 1.0 + padding)
+    L.total_h = L.line_span_y + (S.draw_labels and L.label_h or 0)
 
     local cx, cy = S.bed_w / 2, S.bed_d / 2
-    local above_prime_y = cy + M.HANDLE_XY / 2 + M.CLEARANCE
-    local right_x = cx + M.HANDLE_XY / 2 + M.CLEARANCE
+    local above_y = cy + M.HANDLE_XY / 2 + M.CLEARANCE
 
-    local can_above_x = (cx - L.span_x / 2 >= M.MARGIN)
-                        and (cx + L.span_x / 2 <= S.bed_w - M.MARGIN)
-    local can_right_x = (right_x + L.span_x <= S.bed_w - M.MARGIN)
+    -- Stack lines across the bed WIDTH (X) with the prime line to the LEFT of the pattern.
+    local usable_x = (S.bed_w - 2 * M.MARGIN) - M.PRIME_GAP - 2 * L.pad_x
 
-    local usable_above_y = (S.bed_d - M.MARGIN) - (above_prime_y + M.PRIME_GAP) - 2 * L.pad_y
-    local usable_right_y = (S.bed_d - 2 * M.MARGIN) - M.PRIME_GAP - 2 * L.pad_y
-
-    -- Adaptive density tiers {pitch_y, label_every}:
+    -- Adaptive density tiers {pitch_x, label_every}:
     -- Normal (5.2 mm, every 1st) for coarse steps;
     -- Dense (3.0 mm, every 2nd) automatically when pa_step <= 0.002 or when normal doesn't fit;
     -- Ultra-dense (2.0 mm, every 5th) when even dense doesn't fit all requested lines.
@@ -288,55 +285,57 @@ function M.layout_lines(S)
         tiers = {{5.2, 1}, {3.0, 2}, {2.0, 5}}
     end
 
-    local placed, n, clamped, pitch_y, label_every = nil, n_req, false, nil, nil
+    local n, clamped, pitch_x, label_every = n_req, false, nil, nil
     for _, tier in ipairs(tiers) do
-        local ty_pitch, ty_every = tier[1], tier[2]
-        local req_span_y = (n_req - 1) * ty_pitch
-        if can_above_x and req_span_y <= usable_above_y + 1e-9 then
-            placed, pitch_y, label_every = "above", ty_pitch, ty_every
-            break
-        elseif can_right_x and req_span_y <= usable_right_y + 1e-9 then
-            placed, pitch_y, label_every = "right", ty_pitch, ty_every
+        local tx_pitch, tx_every = tier[1], tier[2]
+        if (n_req - 1) * tx_pitch <= usable_x + 1e-9 then
+            pitch_x, label_every = tx_pitch, tx_every
             break
         end
     end
 
-    -- Still too many lines even in the densest tier: clamp on the side with more Y room
-    if not placed then
+    if not pitch_x then
         local densest = tiers[#tiers]
-        pitch_y, label_every = densest[1], densest[2]
+        pitch_x, label_every = densest[1], densest[2]
         clamped = true
-        if can_right_x and usable_right_y >= usable_above_y then
-            placed = "right"
-            n = math.min(n_req, math.max(2, math.floor(usable_right_y / pitch_y) + 1))
-        else
-            placed = "above"
-            n = math.min(n_req, math.max(2, math.floor(usable_above_y / pitch_y) + 1))
-        end
+        n = math.min(n_req, math.max(2, math.floor(usable_x / pitch_x) + 1))
     end
 
-    L.pitch_y = pitch_y
+    L.pitch_x = pitch_x
     L.label_every = label_every
     L.clamped = clamped
     L.num_lines = n
-    L.span_y = (n - 1) * L.pitch_y
-    L.frame_h = L.span_y + 2 * L.pad_y
+    L.span_x = (n - 1) * L.pitch_x
+    L.frame_w = L.span_x + 2 * L.pad_x
+    local total_w = M.PRIME_GAP + L.frame_w
 
-    if placed == "above" then
-        L.min_x = cx - L.span_x / 2
-        L.prime_y = above_prime_y
-        L.frame_min_y = L.prime_y + M.PRIME_GAP
-        L.min_y = L.frame_min_y + L.pad_y
+    -- Center full horizontal extent [prime_x .. frame_min_x + frame_w] around bed center X
+    L.prime_x = cx - total_w / 2
+    L.frame_min_x = L.prime_x + M.PRIME_GAP
+    L.min_x = L.frame_min_x + L.pad_x
+
+    -- Vertical placement:
+    -- 1) Above the centered handle cube if it fits in the upper half of the bed,
+    -- 2) Else centered in Y with two symmetric 4x4 mm handle cubes 3 mm above & below.
+    if above_y + L.total_h <= S.bed_d - M.MARGIN + 1e-9 then
+        L.frame_min_y = above_y
+        L.handle_dual = false
+        L.handle_dx = 0
+        L.handle_dy = 0
+        L.park_x = cx
+        L.park_y = cy
     else
-        L.min_x = right_x
-        local total_y = M.PRIME_GAP + L.frame_h
-        L.prime_y = cy - total_y / 2
-        L.frame_min_y = L.prime_y + M.PRIME_GAP
-        L.min_y = L.frame_min_y + L.pad_y
+        L.frame_min_y = cy - L.total_h / 2
+        L.handle_dual = true
+        L.handle_dx = 0
+        L.handle_dy = L.total_h + 2 * M.CLEARANCE + M.HANDLE_XY
+        L.park_x = cx
+        L.park_y = L.frame_min_y + L.total_h + M.CLEARANCE + M.HANDLE_XY / 2
     end
 
-    L.max_x = L.min_x + L.span_x
-    L.max_y = L.min_y + L.span_y
+    L.min_y = L.frame_min_y
+    L.max_x = L.frame_min_x + L.frame_w
+    L.max_y = L.frame_min_y + L.total_h
     return L
 end
 
@@ -376,15 +375,15 @@ function M.build_lines(S)
                     layer_z = z,
                     fill = false,
                 }
-                draw.draw_box(w, L.min_x, L.frame_min_y, L.line_span_x, L.frame_h, frame_box)
+                draw.draw_box(w, L.frame_min_x, L.frame_min_y, L.frame_w, L.line_span_y, frame_box)
             end
 
-            -- 2. Společný podklad pro čísla
+            -- 2. Společný podklad pro čísla nad linkami (bez překryvu s rámečkem)
             if S.draw_labels then
-                local tab_x = S.draw_frame and (L.min_x + L.line_span_x - L.lw_first)
-                                           or (L.min_x + L.line_span_x + 1.0)
-                local tab_w = S.draw_frame and (L.label_w + L.lw_first)
-                                           or (L.label_w - 1.0)
+                local tab_y = S.draw_frame and (L.frame_min_y + L.line_span_y + L.spacing_first)
+                                           or (L.frame_min_y + L.line_span_y + 1.0)
+                local tab_h = S.draw_frame and (L.label_h - L.spacing_first)
+                                           or (L.label_h - 1.0)
                 local tab = {
                     perimeters = 2,
                     line_width = L.lw_first,
@@ -394,48 +393,49 @@ function M.build_lines(S)
                     layer_z = z,
                     fill = true,
                 }
-                draw.draw_box(w, tab_x, L.frame_min_y, tab_w, L.frame_h, tab)
+                draw.draw_box(w, L.frame_min_x, tab_y, L.frame_w, tab_h, tab)
             end
 
-            -- 3. Obyčejná prime linka před kalibrací pro ustálení tlaku v trysce
+            -- 3. Prime linka vedle vzoru (vlevo) pro ustálení tlaku v trysce
             draw.emit(w, "; prime line")
             draw.emit(w, firmware.set_pressure_advance(S.flavor, S.pa_start))
-            draw.travel_to(w, L.min_x, L.prime_y, z)
-            draw.line_to(w, L.min_x + L.line_span_x, L.prime_y, epm_first, slow_speed)
+            draw.travel_to(w, L.prime_x, L.frame_min_y, z)
+            draw.line_to(w, L.prime_x, L.frame_min_y + L.line_span_y, epm_first, slow_speed)
 
-            -- 4. Vykreslení kalibračních linek
+            -- 4. Vykreslení kalibračních linek (svisle po Y, skládané na šířku bedu po X)
             local overlap = S.draw_frame and (L.wall_band * 0.5) or 0
             for j = 0, L.num_lines - 1 do
                 local pa = S.pa_start + j * S.pa_step
                 draw.emit(w, firmware.set_pressure_advance(S.flavor, pa))
-                local y = L.min_y + j * L.pitch_y
-                local x = L.min_x + overlap
+                local x = L.min_x + j * L.pitch_x
+                local y = L.frame_min_y + overlap
 
                 draw.travel_to(w, x, y, z)
-                x = L.min_x + L.slow_len
+                y = L.frame_min_y + L.slow_len
                 draw.line_to(w, x, y, epm, slow_speed)
 
-                x = x + L.fast_len
+                y = y + L.fast_len
                 draw.line_to(w, x, y, epm, speed)
 
-                x = L.min_x + L.line_span_x - overlap
+                y = L.frame_min_y + L.line_span_y - overlap
                 draw.line_to(w, x, y, epm, slow_speed)
             end
 
             draw.emit(w, firmware.set_pressure_advance(S.flavor, 0))
 
         elseif i == 2 and S.draw_labels then
-            -- Tisk čísel pouze ve 2. vrstvě (výška max 1 vrstva, tloušťka 2 perimetry), bez 2. vrstvy rámečku
+            -- Tisk čísel pouze ve 2. vrstvě (otočeno o 90 st. nad jednotlivé linky)
             draw.emit(w, firmware.set_pressure_advance(S.flavor, 0))
 
             local gscale = L.glyph_scale or M.LINES_GLYPH_SCALE
             local glyph_h = 4.0 * gscale
             local label_every = L.label_every or 1
+            local oy = L.frame_min_y + L.line_span_y + 2.0
             local opts = {
                 epm = epm_glyph,
                 speed = M.GLYPH_SPEED,
                 layer_z = z,
-                horizontal = true,
+                horizontal = false,
                 scale = gscale,
                 line_width = L.lw,
                 layer_height = L.h,
@@ -443,25 +443,29 @@ function M.build_lines(S)
             }
             for j = 0, L.num_lines - 1, label_every do
                 local pa = S.pa_start + j * S.pa_step
-                local y = L.min_y + j * L.pitch_y
-                local x = L.min_x + L.line_span_x
-                draw.draw_number(w, x + 2.0, y - glyph_h / 2, draw.fmt_value(pa), opts)
+                local x = L.min_x + j * L.pitch_x
+                draw.draw_number(w, x + glyph_h / 2, oy, draw.fmt_value(pa), opts)
             end
         end
 
         draw.emit(w, "; park over the handle")
-        draw.park_at(w, S.bed_w / 2, S.bed_d / 2, z)
+        draw.park_at(w, L.park_x, L.park_y, z)
         if not entry.retracted then draw.unretract(w) end
 
         table.insert(layers, {z = z, insert_z = (i - M.INSERT_Z_FRACTION) * L.h,
                               gcode = draw.gcode(w)})
     end
 
-    local extents = {min_x = L.min_x, min_y = L.prime_y,
-                     max_x = L.max_x, max_y = L.frame_min_y + L.frame_h}
+    local extents = {min_x = L.prime_x, min_y = L.frame_min_y,
+                     max_x = L.max_x, max_y = L.max_y}
+    local cx, cy = S.bed_w / 2, S.bed_d / 2
+    local h_min_y = L.handle_dual and (cy - L.handle_dy / 2 - M.HANDLE_XY / 2) or (cy - M.HANDLE_XY / 2)
+    local h_max_y = L.handle_dual and (cy + L.handle_dy / 2 + M.HANDLE_XY / 2) or (cy + M.HANDLE_XY / 2)
+    local fits = within(extents, S) and h_min_y >= 5.0 and h_max_y <= S.bed_d - 5.0
     return {
-        fits = within(extents, S),
-        handle = {size_xy = M.HANDLE_XY, height = L.layers * L.h},
+        fits = fits,
+        handle = {size_xy = M.HANDLE_XY, height = L.layers * L.h,
+                  dual = L.handle_dual, dx = L.handle_dx, dy = L.handle_dy},
         layers = layers,
         speed = speed,
         clamped = L.clamped,

@@ -13,7 +13,7 @@ M.BASE_LAYERS = 2          -- base plate layers; bands start at its top (2h)
 M.POST_D = 6.0             -- post outer diameter [mm] (measured from Orca's export)
 M.POST_SPACING = 31.5      -- center to center [mm] (ditto; posts sit fully on the base)
 M.PERIMETERS = 2
-M.TOWER_OFFSET_Y = 25.0    -- keep the string gap clear of the handle column
+M.CLEARANCE = 3.0          -- gap between the handle cylinder and the tower base [mm]
 M.BAND_MM = 1.0            -- Orca: one retraction step per mm of height
 M.MAX_BANDS = 50           -- taller than 50 mm is a typo
 M.HANDLE_XY = 5.0
@@ -61,8 +61,9 @@ function M.layout(S)
     -- the last layer below the schedule's top z
     L.layers = math.ceil((L.base_top + L.bands * M.BAND_MM - 1e-9) / L.h) - 1
     L.tower_top = L.layers * L.h
+    L.handle_d = math.max(M.HANDLE_XY, L.tower_top / 2.5)
     local cx = S.bed_w / 2
-    local ty = S.bed_d / 2 + M.TOWER_OFFSET_Y
+    local ty = S.bed_d / 2 + L.handle_d / 2 + M.CLEARANCE + M.BASE_D / 2
     L.base = {x0 = cx - M.BASE_W / 2, y0 = ty - M.BASE_D / 2}
     L.r = M.POST_D / 2 - L.width.wall / 2
     -- seams face INTO the gap: the band travel then hops between the posts'
@@ -147,7 +148,7 @@ function M.build(S)
         -- footprint to stay stable on the bed
         -- a round handle has no corners to curl, so it tolerates a slimmer
         -- aspect than a square one; 2.5:1 against the tower height
-        handle = {diameter = math.max(M.HANDLE_XY, L.tower_top / 2.5),
+        handle = {diameter = L.handle_d,
                   height = L.tower_top},
         layers = layers, speed = speed, valid = true,
         fits = L.fits, extents = L.extents,

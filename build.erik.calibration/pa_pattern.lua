@@ -143,11 +143,7 @@ function execute(opts)
     for _, layer in ipairs(r.layers) do
         api.project:insert_layer_custom_gcode(bed, layer.insert_z, layer.gcode)
     end
-    api.project:add_object{
-        mesh = api.make_cube(gen.HANDLE_XY, gen.HANDLE_XY, r.handle.height),
-        type = VolumeType.Solid,
-        extruder = S.tool_idx,
-    }
+    util.add_handle(r.handle, S.tool_idx)
 
     print(string.format("PA Pattern: Tool T%d, %s, %s, frame=%s, PA %g..%g step %g, speed %d mm/s",
                         S.slot_idx, flavor, S.pattern, tostring(S.draw_frame), S.pa_start, r.pa_end_effective, S.pa_step, r.speed))

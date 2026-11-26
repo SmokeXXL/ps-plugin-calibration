@@ -168,6 +168,43 @@ end
 --- Serpentine fill: parallel diagonals connected along the border.
 -- opts.angle: 45 (default) or 135. opts.spacing overrides the width-derived
 -- line spacing (sparse fill passes a widened value).
+
+--- Unified T-shaped perimeter: a main pad [pad_x .. pad_x+pad_w, pad_y .. pad_y+pad_h]
+--- with a narrower label tab [tab_x .. tab_x+tab_w, pad_y+pad_h .. pad_y+pad_h+tab_h]
+--- welded cleanly into a single continuous closed loop per perimeter (zero overlap).
+function M.draw_t_box(w, pad_x, pad_y, pad_w, pad_h, tab_x, tab_w, tab_h, opts)
+    local spacing = opts.line_width - opts.layer_height * (1 - math.pi / 4)
+    local n = opts.perimeters or 1
+    local pad_x1 = pad_x + pad_w
+    local pad_y1 = pad_y + pad_h
+    local tab_x1 = tab_x + tab_w
+    local tab_y1 = pad_y1 + tab_h
+    local shoulder_l = tab_x - pad_x
+    local shoulder_r = pad_x1 - tab_x1
+    local max_n = math.max(1, math.floor(math.min(pad_w, pad_h, tab_w, tab_h) / 2 / spacing))
+    if n > max_n then n = max_n end
+    for k = 0, n - 1 do
+        local o = k * spacing
+        -- Keep inner perimeters valid even on narrow shoulders
+        local tx0 = math.max(pad_x + o, tab_x + o)
+        local tx1 = math.min(pad_x1 - o, tab_x1 - o)
+        local py1 = pad_y1 - o
+        M.travel_to(w, pad_x + o, pad_y + o, opts.layer_z)
+        M.line_to(w, pad_x1 - o, pad_y + o, opts.epm, opts.speed)
+        M.line_to(w, pad_x1 - o, py1, opts.epm, opts.speed)
+        if tx1 < pad_x1 - o - 1e-6 then
+            M.line_to(w, tx1, py1, opts.epm, opts.speed)
+        end
+        M.line_to(w, tx1, tab_y1 - o, opts.epm, opts.speed)
+        M.line_to(w, tx0, tab_y1 - o, opts.epm, opts.speed)
+        M.line_to(w, tx0, py1, opts.epm, opts.speed)
+        if tx0 > pad_x + o + 1e-6 then
+            M.line_to(w, pad_x + o, py1, opts.epm, opts.speed)
+        end
+        M.line_to(w, pad_x + o, pad_y + o, opts.epm, opts.speed)
+    end
+end
+
 function M.fill_zigzag(w, min_x, min_y, size_x, size_y, opts)
     if size_x <= 0 or size_y <= 0 then return end
     local spacing = opts.spacing

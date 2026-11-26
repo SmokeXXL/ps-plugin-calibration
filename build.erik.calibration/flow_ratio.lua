@@ -119,11 +119,7 @@ function execute(opts)
         api.project:insert_layer_custom_gcode(bed, layer.insert_z, layer.gcode)
     end
 
-    api.project:add_object{
-        mesh = api.make_cube(gen.HANDLE_XY, gen.HANDLE_XY, r.handle.height),
-        type = VolumeType.Solid,
-        extruder = S.tool_idx,
-    }
+    util.add_handle(r.handle, S.tool_idx)
 
     print(string.format(
         "Flow Ratio: Tool T%d, %d pads, %d layers (sparse=%s), labels=%s, flow %.3f..%.3f (step %.3f), pattern %s",
