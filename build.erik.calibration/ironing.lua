@@ -8,6 +8,7 @@ info = {
     menu = "Calibration/Ironing",
     params = {
         {name = "tool", label = "Extruder / Tool (1 = T0, 2 = T1...)", type = "int", default = 1},
+        {name = "draw_labels", label = "Print Labels", type = "bool", default = true},
         {name = "nozzle", label = "Nozzle [mm] (0 = auto)", type = "string", default = "0"},
         {name = "layer_height", label = "Layer Height [mm] (0 = auto)", type = "string", default = "0"},
         {name = "flow_start", label = "Start Ironing Flow [%]", type = "string", default = "10"},
@@ -46,6 +47,7 @@ function execute(opts)
     local S = {
         tool_idx = tool_idx,
         slot_idx = slot_idx,
+        draw_labels = (opts.draw_labels ~= false),
         flow_start = util.parse_number(opts.flow_start, 10),
         flow_step = util.parse_number(opts.flow_step, 5),
         flow_count = math.max(1, opts.flow_count or 4),
@@ -88,7 +90,7 @@ function execute(opts)
         "Ironing: Tool T%d retract %.2f mm @ %g mm/s, lift %.2f (from %s); max flow %g mm3/s",
         slot_idx, S.retract, S.retract_speed, S.zhop, retract_src, S.vol_cap))
 
-    if S.flow_start <= 0 or S.speed_start <= 0 or S.spacing <= 0 then
+    if S.flow_start <= 0 or S.speed_start <= 0 or S.spacing <= 0 or S.flow_step < 0 or S.speed_step < 0 then
         util.show_error("Ironing", "IRONING: BAD PARAMS")
         return
     end
@@ -102,7 +104,7 @@ function execute(opts)
     local layer_h = S.layer_height
     bed:print_presets():set("layer_height", layer_h)
     bed:print_presets():set("first_layer_height", layer_h)
-    bed:print_presets():set("brim_type", "no_brim")
+    pcall(function() bed:print_presets():set("brim_type", "no_brim") end)
     bed:print_presets():set("skirts", 0)
     pcall(function() bed:print_presets():set("ironing", false) end)
 
@@ -125,8 +127,8 @@ function execute(opts)
     }
 
     print(string.format(
-        "Ironing: Tool T%d, %dx%d grid, flow %g..%g%% (step %g%%), speed %g..%g mm/s (step %g), spacing %.2f mm",
-        S.slot_idx, S.flow_count, S.speed_count,
+        "Ironing: Tool T%d, %dx%d grid, labels=%s, flow %g..%g%% (step %g%%), speed %g..%g mm/s (step %g), spacing %.2f mm",
+        S.slot_idx, S.flow_count, S.speed_count, tostring(S.draw_labels),
         r.flow_min, r.flow_max, S.flow_step,
         r.speed_min, r.speed_max, S.speed_step, S.spacing))
 end

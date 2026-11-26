@@ -1,4 +1,4 @@
--- ABOUTME: Builds the Ellis and Lines pressure-advance patterns as per-layer 
+-- ABOUTME: Builds the Ellis and Lines pressure-advance patterns as per-layer
 -- ABOUTME: G-code blobs keyed to the handle object's layer heights. Pure.
 
 local draw = require("draw")
@@ -10,7 +10,8 @@ M.HANDLE_XY = 5.0          -- handle cube footprint [mm]
 M.LAYERS = 4               -- pattern layers (Ellis)
 M.LEG = 30.0               -- chevron leg length [mm]
 M.WALLS = 3                -- nested walls per chevron / frame perimeters
-M.CLEARANCE = 2.0          -- gap between the frame's left wall and the handle [mm]
+M.CLEARANCE = 3.0          -- gap between the handle cube and the pattern [mm]
+M.PRIME_GAP = 3.5          -- gap between the prime line and the pattern/frame [mm]
 M.MARGIN = 10.0            -- minimum pattern distance from the bed edge [mm]
 M.GLYPH_PAD = 1.5          -- padding inside the number tab [mm]
 M.GLYPH_SCALE = 1.25       -- 25% larger digits (5 mm tall instead of 4 mm)
@@ -54,9 +55,33 @@ function M.layout_ellis(S)
     local spacing_first = L.lw_first - L.h * (1 - math.pi / 4)
     L.wall_band = M.WALLS * spacing_first
     L.frame_pad = L.wall_band + M.GLYPH_PAD
-    
-    L.frame_min_x = S.bed_w / 2 - M.HANDLE_XY / 2 - M.CLEARANCE - L.wall_band
-    local usable = (S.bed_w - M.MARGIN) - L.frame_min_x - 2 * L.frame_pad
+
+    L.frame_h = 2 * L.dy
+    L.tab_h = S.draw_labels and (5 * 3.0 * M.GLYPH_SCALE + 2 * M.GLYPH_PAD) or 0
+    local total_h = L.frame_h + L.tab_h
+
+    -- The handle cube is placed at the bed center (bed_w/2, bed_d/2) by PrusaSlicer.
+    -- Position the pattern dynamically around it so the cube always stays outside:
+    -- prefer above the cube (uses full bed width), else below, else to the right.
+    local cx, cy = S.bed_w / 2, S.bed_d / 2
+    local above_y = cy + M.HANDLE_XY / 2 + M.CLEARANCE
+    local below_y = cy - M.HANDLE_XY / 2 - M.CLEARANCE - total_h
+    local placed, usable
+    if above_y + total_h <= S.bed_d - M.MARGIN then
+        placed = "above"
+        L.frame_min_y = above_y
+        usable = (S.bed_w - 2 * M.MARGIN) - M.PRIME_GAP - 2 * L.frame_pad
+    elseif below_y >= M.MARGIN then
+        placed = "below"
+        L.frame_min_y = below_y
+        usable = (S.bed_w - 2 * M.MARGIN) - M.PRIME_GAP - 2 * L.frame_pad
+    else
+        placed = "right"
+        L.frame_min_y = cy - L.frame_h / 2
+        local right_x = cx + M.HANDLE_XY / 2 + M.CLEARANCE + M.PRIME_GAP
+        usable = (S.bed_w - M.MARGIN) - right_x - 2 * L.frame_pad
+    end
+
     L.clamped = false
     while n > 2 and width_for(n) > usable do
         n = n - 1
@@ -65,14 +90,17 @@ function M.layout_ellis(S)
     L.num_patterns = n
     L.pattern_w = width_for(n)
     L.frame_w = L.pattern_w + 2 * L.frame_pad
-    
-    L.frame_h = 2 * L.dy
-    L.frame_min_y = S.bed_d / 2 - L.frame_h / 2
+
+    if placed == "above" or placed == "below" then
+        L.frame_min_x = cx - (L.frame_w - M.PRIME_GAP) / 2
+    else
+        L.frame_min_x = cx + M.HANDLE_XY / 2 + M.CLEARANCE + M.PRIME_GAP
+    end
+    L.prime_x = L.frame_min_x - M.PRIME_GAP
     L.tab_min_y = L.frame_min_y + L.frame_h
-    L.tab_h = S.draw_labels and (5 * 3.0 * M.GLYPH_SCALE + 2 * M.GLYPH_PAD) or 0
     L.pat_min_x = L.frame_min_x + L.frame_pad
     L.pat_min_y = L.frame_min_y
-    
+
     L.first_y0 = L.frame_min_y + L.wall_band + 0.5
     L.first_dy = (L.frame_h - 2 * L.wall_band - 1.0) / 2
     L.first_dx = L.first_dy
@@ -94,7 +122,15 @@ local function draw_chevrons(w, L, S, z, epm, speed, geo)
 end
 
 local function draw_labels(w, L, S, z, epm_glyph, speed)
-    local opts = {epm = epm_glyph, speed = M.GLYPH_SPEED, layer_z = z, scale = M.GLYPH_SCALE}
+    local opts = {
+        epm = epm_glyph,
+        speed = M.GLYPH_SPEED,
+        layer_z = z,
+        scale = M.GLYPH_SCALE,
+        line_width = L.lw,
+        layer_height = L.h,
+        perimeters = 2,
+    }
     local glyph_h = 4.0 * M.GLYPH_SCALE
     local oy = L.tab_min_y + M.GLYPH_PAD
     for j = 0, L.num_patterns - 1, 2 do
@@ -130,10 +166,12 @@ function M.build_ellis(S)
         end
         if i == 1 then
             draw.emit(w, firmware.set_pressure_advance(S.flavor, S.pa_start))
-            local box = {perimeters = M.WALLS, line_width = L.lw_first,
-                         layer_height = L.h, epm = epm_first,
-                         speed = M.FIRST_LAYER_SPEED, layer_z = z, fill = false}
-            draw.draw_box(w, L.frame_min_x, L.frame_min_y, L.frame_w, L.frame_h, box)
+            if S.draw_frame then
+                local box = {perimeters = M.WALLS, line_width = L.lw_first,
+                             layer_height = L.h, epm = epm_first,
+                             speed = M.FIRST_LAYER_SPEED, layer_z = z, fill = false}
+                draw.draw_box(w, L.frame_min_x, L.frame_min_y, L.frame_w, L.frame_h, box)
+            end
             if S.draw_labels then
                 local tab = {perimeters = 1, line_width = L.lw_first,
                              layer_height = L.h, epm = epm_first,
@@ -141,24 +179,26 @@ function M.build_ellis(S)
                 draw.draw_box(w, L.frame_min_x, L.tab_min_y, L.frame_w, L.tab_h, tab)
             end
         end
+
         local chev_speed = (i == 1) and M.FIRST_LAYER_SPEED or speed
-        if i > 1 then
-            draw.emit(w, "; prime line")
-            local px = L.frame_min_x + L.wall_band / 2
-            draw.travel_to(w, px, L.frame_min_y, z)
-            draw.line_to(w, px, L.frame_min_y + L.frame_h, epm, chev_speed)
-        end
-        local geo = (i == 1)
+        -- Prime line before the pattern on every layer to stabilize nozzle pressure
+        draw.emit(w, "; prime line")
+        draw.emit(w, firmware.set_pressure_advance(S.flavor, S.pa_start))
+        local prime_epm = (i == 1) and epm_first or epm
+        draw.travel_to(w, L.prime_x, L.frame_min_y, z)
+        draw.line_to(w, L.prime_x, L.frame_min_y + L.frame_h, prime_epm, M.FIRST_LAYER_SPEED)
+
+        local geo = (i == 1 and S.draw_frame)
             and {x_off = L.first_x_off, y0 = L.first_y0, dx = L.first_dx, dy = L.first_dy}
             or {x_off = 0, y0 = L.pat_min_y, dx = L.dx, dy = L.dy}
         draw_chevrons(w, L, S, z, epm, chev_speed, geo)
-        
-        -- Tisk čísel ve 2. i 3. vrstvě pro výraznější výšku a čitelnost
-        if (i == 2 or i == 3) and S.draw_labels then
+
+        -- Tisk čísel pouze ve 2. vrstvě (výška max 1 vrstva, tloušťka 2 perimetry)
+        if i == 2 and S.draw_labels then
             draw.emit(w, firmware.set_pressure_advance(S.flavor, 0))
             draw_labels(w, L, S, z, epm_glyph, speed)
         end
-        
+
         if i == M.LAYERS then
             draw.emit(w, firmware.set_pressure_advance(S.flavor, 0))
         end
@@ -175,7 +215,7 @@ function M.build_ellis(S)
         speed = speed,
         clamped = L.clamped,
         pa_end_effective = S.pa_start + (L.num_patterns - 1) * S.pa_step,
-        extents = {min_x = L.frame_min_x, min_y = L.frame_min_y,
+        extents = {min_x = L.prime_x, min_y = L.frame_min_y,
                    max_x = L.frame_min_x + L.frame_w,
                    max_y = L.tab_min_y + L.tab_h},
     }
@@ -195,32 +235,57 @@ function M.layout_lines(S)
     L.line_span_x = L.slow_len * 2 + L.fast_len
     L.pitch_y = 6.5            -- větší rozestup pro vyšší 5mm čísla
     L.pad_y = 4.0              -- přesah rámečku nad první a pod poslední linkou
-    L.layers = S.draw_labels and 3 or 1
+    L.layers = S.draw_labels and 2 or 1
 
     local spacing_first = L.lw_first - L.h * (1 - math.pi / 4)
     L.wall_band = M.WALLS * spacing_first
 
     local n = math.ceil((S.pa_end - S.pa_start) / S.pa_step - 1e-9) + 1
-    L.num_lines = n
     L.label_w = 24.0
     L.span_x = L.line_span_x + (S.draw_labels and L.label_w or 0)
     L.span_y = (n - 1) * L.pitch_y
     L.frame_h = L.span_y + 2 * L.pad_y
 
-    L.min_x = S.bed_w / 2 - L.span_x / 2
-    L.min_y = S.bed_d / 2 - L.span_y / 2
+    local cx, cy = S.bed_w / 2, S.bed_d / 2
+    local above_prime_y = cy + M.HANDLE_XY / 2 + M.CLEARANCE
+    local right_x = cx + M.HANDLE_XY / 2 + M.CLEARANCE
 
+    -- Position pattern dynamically around the centered handle cube so it never collides:
+    -- 1) Above the cube if the full configured pattern fits in the upper half of the bed,
+    -- 2) Else to the right of the cube (uses full bed depth),
+    -- 3) Else above the cube with clamped line count (small beds).
     L.clamped = false
-    while n > 2 and (L.min_y - L.pad_y < M.MARGIN or L.min_y + L.span_y + L.pad_y > S.bed_d - M.MARGIN) do
-        n = n - 1
-        L.span_y = (n - 1) * L.pitch_y
-        L.frame_h = L.span_y + 2 * L.pad_y
-        L.min_y = S.bed_d / 2 - L.span_y / 2
-        L.num_lines = n
-        L.clamped = true
+    if above_prime_y + M.PRIME_GAP + L.frame_h <= S.bed_d - M.MARGIN then
+        L.min_x = cx - L.span_x / 2
+        L.prime_y = above_prime_y
+        L.frame_min_y = L.prime_y + M.PRIME_GAP
+        L.min_y = L.frame_min_y + L.pad_y
+    elseif right_x + L.span_x <= S.bed_w - M.MARGIN then
+        L.min_x = right_x
+        L.min_y = cy - L.span_y / 2
+        while n > 2 and (L.min_y - L.pad_y - M.PRIME_GAP < M.MARGIN or L.min_y + L.span_y + L.pad_y > S.bed_d - M.MARGIN) do
+            n = n - 1
+            L.span_y = (n - 1) * L.pitch_y
+            L.frame_h = L.span_y + 2 * L.pad_y
+            L.min_y = cy - L.span_y / 2
+            L.clamped = true
+        end
+        L.frame_min_y = L.min_y - L.pad_y
+        L.prime_y = L.frame_min_y - M.PRIME_GAP
+    else
+        L.min_x = cx - L.span_x / 2
+        L.prime_y = above_prime_y
+        L.frame_min_y = L.prime_y + M.PRIME_GAP
+        while n > 2 and (L.frame_min_y + L.frame_h > S.bed_d - M.MARGIN) do
+            n = n - 1
+            L.span_y = (n - 1) * L.pitch_y
+            L.frame_h = L.span_y + 2 * L.pad_y
+            L.clamped = true
+        end
+        L.min_y = L.frame_min_y + L.pad_y
     end
 
-    L.frame_min_y = L.min_y - L.pad_y
+    L.num_lines = n
     L.max_x = L.min_x + L.span_x
     L.max_y = L.min_y + L.span_y
     return L
@@ -235,7 +300,7 @@ function M.build_lines(S)
 
     local entry = draw.writer_opts(S)
     local layers = {}
-    
+
     for i = 1, L.layers do
         local z = i * L.h
         local w = draw.new(entry)
@@ -252,21 +317,26 @@ function M.build_lines(S)
         if i == 1 then
             draw.emit(w, firmware.set_pressure_advance(S.flavor, 0))
 
-            -- 1. Obvodový rámeček kolem celé kalibrace (propojí všechny linky do jednoho kusu)
-            local frame_box = {
-                perimeters = M.WALLS,
-                line_width = L.lw_first,
-                layer_height = L.h,
-                epm = epm_first,
-                speed = slow_speed,
-                layer_z = z,
-                fill = false,
-            }
-            draw.draw_box(w, L.min_x, L.frame_min_y, L.line_span_x, L.frame_h, frame_box)
+            -- 1. Volitelný obvodový rámeček (pouze v 1. vrstvě)
+            if S.draw_frame then
+                local frame_box = {
+                    perimeters = M.WALLS,
+                    line_width = L.lw_first,
+                    layer_height = L.h,
+                    epm = epm_first,
+                    speed = slow_speed,
+                    layer_z = z,
+                    fill = false,
+                }
+                draw.draw_box(w, L.min_x, L.frame_min_y, L.line_span_x, L.frame_h, frame_box)
+            end
 
-            -- 2. Společný podklad pro čísla přímo napojený na pravou stěnu rámečku
+            -- 2. Společný podklad pro čísla
             if S.draw_labels then
-                local tab_x = L.min_x + L.line_span_x - L.lw_first
+                local tab_x = S.draw_frame and (L.min_x + L.line_span_x - L.lw_first)
+                                           or (L.min_x + L.line_span_x + 1.0)
+                local tab_w = S.draw_frame and (L.label_w + L.lw_first)
+                                           or (L.label_w - 1.0)
                 local tab = {
                     perimeters = 2,
                     line_width = L.lw_first,
@@ -276,11 +346,17 @@ function M.build_lines(S)
                     layer_z = z,
                     fill = true,
                 }
-                draw.draw_box(w, tab_x, L.frame_min_y, L.label_w + L.lw_first, L.frame_h, tab)
+                draw.draw_box(w, tab_x, L.frame_min_y, tab_w, L.frame_h, tab)
             end
 
-            -- 3. Vykreslení kalibračních linek (ukotvených zleva i zprava do stěny rámečku)
-            local overlap = L.wall_band * 0.5
+            -- 3. Obyčejná prime linka před kalibrací pro ustálení tlaku v trysce
+            draw.emit(w, "; prime line")
+            draw.emit(w, firmware.set_pressure_advance(S.flavor, S.pa_start))
+            draw.travel_to(w, L.min_x, L.prime_y, z)
+            draw.line_to(w, L.min_x + L.line_span_x, L.prime_y, epm_first, slow_speed)
+
+            -- 4. Vykreslení kalibračních linek
+            local overlap = S.draw_frame and (L.wall_band * 0.5) or 0
             for j = 0, L.num_lines - 1 do
                 local pa = S.pa_start + j * S.pa_step
                 draw.emit(w, firmware.set_pressure_advance(S.flavor, pa))
@@ -290,31 +366,19 @@ function M.build_lines(S)
                 draw.travel_to(w, x, y, z)
                 x = L.min_x + L.slow_len
                 draw.line_to(w, x, y, epm, slow_speed)
-                
+
                 x = x + L.fast_len
                 draw.line_to(w, x, y, epm, speed)
-                
+
                 x = L.min_x + L.line_span_x - overlap
                 draw.line_to(w, x, y, epm, slow_speed)
             end
-            
+
             draw.emit(w, firmware.set_pressure_advance(S.flavor, 0))
-            
-        elseif (i == 2 or i == 3) and S.draw_labels then
-            -- Tisk čísel ve 2. a 3. vrstvě + zpevnění obvodu rámečku ve 2. vrstvě
+
+        elseif i == 2 and S.draw_labels then
+            -- Tisk čísel pouze ve 2. vrstvě (výška max 1 vrstva, tloušťka 2 perimetry), bez 2. vrstvy rámečku
             draw.emit(w, firmware.set_pressure_advance(S.flavor, 0))
-            if i == 2 then
-                local rim = {
-                    perimeters = 1,
-                    line_width = L.lw,
-                    layer_height = L.h,
-                    epm = epm,
-                    speed = slow_speed,
-                    layer_z = z,
-                    fill = false,
-                }
-                draw.draw_box(w, L.min_x, L.frame_min_y, L.line_span_x, L.frame_h, rim)
-            end
 
             local glyph_h = 4.0 * M.GLYPH_SCALE
             local opts = {
@@ -323,6 +387,9 @@ function M.build_lines(S)
                 layer_z = z,
                 horizontal = true,
                 scale = M.GLYPH_SCALE,
+                line_width = L.lw,
+                layer_height = L.h,
+                perimeters = 2,
             }
             for j = 0, L.num_lines - 1 do
                 local pa = S.pa_start + j * S.pa_step
@@ -346,7 +413,7 @@ function M.build_lines(S)
         speed = speed,
         clamped = L.clamped,
         pa_end_effective = S.pa_start + (L.num_lines - 1) * S.pa_step,
-        extents = {min_x = L.min_x, min_y = L.frame_min_y,
+        extents = {min_x = L.min_x, min_y = L.prime_y,
                    max_x = L.max_x, max_y = L.frame_min_y + L.frame_h},
     }
 end
@@ -358,7 +425,7 @@ end
 function M.build(S)
     assert(firmware.set_pressure_advance(S.flavor, 0),
            "flavor has no pressure-advance command: " .. tostring(S.flavor))
-           
+
     if S.pattern == "lines" then
         return M.build_lines(S)
     else

@@ -44,8 +44,11 @@ function M.show_error(prefix, msg)
     if not ok then print(prefix .. ": could not create the error object") end
 end
 
---- Parse a numeric string param; garbage or nil yields the fallback.
+--- Parse a numeric string param (accepts both '.' and ','); garbage or nil yields the fallback.
 function M.parse_number(s, default)
+    if type(s) == "string" then
+        s = s:gsub(",", ".")
+    end
     local v = tonumber(s)
     if v == nil then return default end
     return v

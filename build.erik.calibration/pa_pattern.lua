@@ -1,4 +1,4 @@
--- ABOUTME: PA Pattern calibration plugin: prints the Ellis pressure-advance pattern
+-- ABOUTME: PA Pattern calibration plugin: prints the Ellis or Lines pressure-advance pattern
 -- ABOUTME: via a handle object plus per-layer custom G-code with printed value labels.
 
 -- `require` is unavailable at scan time, so params are written literally; tests in
@@ -12,6 +12,7 @@ info = {
         {name = "tool", label = "Extruder / Tool (1 = T0, 2 = T1...)", type = "int", default = 1},
         {name = "use_lines", label = "Use Lines Pattern", type = "bool", default = true},
         {name = "draw_labels", label = "Print Labels", type = "bool", default = true},
+        {name = "draw_frame", label = "Draw Frame", type = "bool", default = false},
         {name = "nozzle", label = "Nozzle [mm] (0 = auto)", type = "string", default = "0"},
         {name = "layer_height", label = "Layer Height [mm] (0 = auto)", type = "string", default = "0"},
         -- PA values are strings: the dialog's float control rounds to whole
@@ -54,18 +55,19 @@ function execute(opts)
 
     local tool_idx = math.max(1, opts.tool or 1)
     local slot_idx = tool_idx - 1
-    
+
     local ui_nozzle = util.parse_number(opts.nozzle, 0)
     local ui_lh = util.parse_number(opts.layer_height, 0)
 
-    -- Opravená logika přepínače: výchozí stav (doprava) = true -> tiskne se "lines"
-    local is_lines = (opts.use_lines == false)
+    -- Přepínače: true = zapnuto, false = vypnuto
+    local is_lines = (opts.use_lines ~= false)
 
     local S = {
         tool_idx = tool_idx,
         slot_idx = slot_idx,
         pattern = is_lines and "lines" or "ellis",
-        draw_labels = (opts.draw_labels == false),
+        draw_labels = (opts.draw_labels ~= false),
+        draw_frame = (opts.draw_frame == true),
         pa_start = util.parse_number(opts.pa_start, 0),
         pa_end = util.parse_number(opts.pa_end, 0.08),
         pa_step = util.parse_number(opts.pa_step, 0.005),
@@ -120,10 +122,11 @@ function execute(opts)
     bed:print_presets():set("support_material_extruder", tool_idx)
     bed:print_presets():set("support_material_interface_extruder", tool_idx)
 
-    -- Known layer grid (first_layer_height is unreadable but settable), and keep
-    -- slicer-drawn loops out of the pattern area.
+    -- Known layer grid (sync both layer_height and first_layer_height with dialog),
+    -- and keep slicer-drawn loops out of the pattern area.
+    bed:print_presets():set("layer_height", S.layer_height)
     bed:print_presets():set("first_layer_height", S.layer_height)
-    bed:print_presets():set("brim_type", "none")
+    pcall(function() bed:print_presets():set("brim_type", "no_brim") end)
     bed:print_presets():set("skirts", 0)
 
     -- Custom-gcode inserts poke the bed instance directly and fire no
@@ -139,8 +142,8 @@ function execute(opts)
         extruder = S.tool_idx,
     }
 
-    print(string.format("PA Pattern: Tool T%d, %s, %s, PA %g..%g step %g, speed %d mm/s",
-                        S.slot_idx, flavor, S.pattern, S.pa_start, r.pa_end_effective, S.pa_step, r.speed))
+    print(string.format("PA Pattern: Tool T%d, %s, %s, frame=%s, PA %g..%g step %g, speed %d mm/s",
+                        S.slot_idx, flavor, S.pattern, tostring(S.draw_frame), S.pa_start, r.pa_end_effective, S.pa_step, r.speed))
     if r.clamped then
         print(string.format("PA Pattern: range clamped to fit the bed; PA End now %g",
                             r.pa_end_effective))

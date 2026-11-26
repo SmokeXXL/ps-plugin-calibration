@@ -1,5 +1,5 @@
 -- ABOUTME: Builds the ironing calibration plate as per-layer G-code blobs: a
--- ABOUTME: 2D grid of labeled pads with custom ironing passes on the top layer. Pure.
+-- ABOUTME: 2D grid of pads (optionally labeled) with custom ironing passes on the top layer. Pure.
 
 info = nil
 
@@ -8,17 +8,17 @@ local M = {}
 M.PAD_W = 30.0
 M.PAD_H = 20.0
 M.TAB_W = 24.0
-M.TAB_H = 10.0
+M.TAB_H = 7.0
 M.TAB_LAYERS = 2
-M.GAP = 8.0
-M.LAYERS = 10
+M.GAP = 6.0
+M.LAYERS = 5               -- standard ~1.0 mm calibration pad height at 0.2 mm layer height
 M.MARGIN = 10.0
 M.HANDLE_XY = 5.0
+M.CLEARANCE = 3.0          -- gap between the centered handle cube and the grid [mm]
 M.FIRST_LAYER_SPEED = 30
 M.GLYPH_SPEED = 20
 M.WALL_SPEED_FRACTION = 0.6
 M.TOP_SPEED_FRACTION = 0.5
-M.SPARSE_DENSITY = 0.35
 M.INSERT_Z_FRACTION = 0.5
 M.IRONING_INSET_FRACTION = 0.25
 
@@ -38,6 +38,7 @@ end
 function M.layout(S)
     local L = {}
     L.h = S.layer_height or (S.nozzle / 2)
+    L.draw_labels = (S.draw_labels ~= false)
     L.width = {
         wall = 1.125 * S.nozzle,
         first = 1.40 * S.nozzle,
@@ -61,15 +62,47 @@ function M.layout(S)
     L.speed_max = s_start + (s_count - 1) * s_step
 
     local cell_w = M.PAD_W
-    local cell_h = M.PAD_H + M.TAB_H
+    local cell_h = M.PAD_H + (L.draw_labels and M.TAB_H or 0)
     L.pitch_x = cell_w + M.GAP
     L.pitch_y = cell_h + M.GAP
     L.span_x = L.cols * cell_w + (L.cols - 1) * M.GAP
     L.span_y = L.rows * cell_h + (L.rows - 1) * M.GAP
 
+    -- The handle cube is placed at the bed center (bed_w/2, bed_d/2) by PrusaSlicer.
+    -- Position the grid dynamically outside the handle cube (same logic as PA Pattern):
+    -- prefer above, else below, else to the right, else to the left.
+    -- Only if the grid is too large for any single side, split rows around the cube
+    -- using an 8 mm row gap so the cube stays safely between rows.
     local cx, cy = S.bed_w / 2, S.bed_d / 2
-    L.xbase = cx - L.span_x / 2
-    L.ybase = cy + M.GAP / 2 - (L.rows // 2) * L.pitch_y
+    local above_y = cy + M.HANDLE_XY / 2 + M.CLEARANCE
+    local below_y = cy - M.HANDLE_XY / 2 - M.CLEARANCE - L.span_y
+    local right_x = cx + M.HANDLE_XY / 2 + M.CLEARANCE
+    local left_x = cx - M.HANDLE_XY / 2 - M.CLEARANCE - L.span_x
+
+    local fits_x_centered = (cx - L.span_x / 2 >= M.MARGIN)
+                            and (cx + L.span_x / 2 <= S.bed_w - M.MARGIN)
+    local fits_y_centered = (cy - L.span_y / 2 >= M.MARGIN)
+                            and (cy + L.span_y / 2 <= S.bed_d - M.MARGIN)
+
+    if fits_x_centered and (above_y + L.span_y <= S.bed_d - M.MARGIN) then
+        L.xbase = cx - L.span_x / 2
+        L.ybase = above_y
+    elseif fits_x_centered and (below_y >= M.MARGIN) then
+        L.xbase = cx - L.span_x / 2
+        L.ybase = below_y
+    elseif fits_y_centered and (right_x + L.span_x <= S.bed_w - M.MARGIN) then
+        L.xbase = right_x
+        L.ybase = cy - L.span_y / 2
+    elseif fits_y_centered and (left_x >= M.MARGIN) then
+        L.xbase = left_x
+        L.ybase = cy - L.span_y / 2
+    else
+        local split_gap = math.max(M.GAP, 8.0)
+        L.pitch_y = cell_h + split_gap
+        L.span_y = L.rows * cell_h + (L.rows - 1) * split_gap
+        L.xbase = cx - L.span_x / 2
+        L.ybase = cy + split_gap / 2 - (L.rows // 2) * L.pitch_y
+    end
 
     L.extents = {
         min_x = L.xbase,
@@ -110,17 +143,14 @@ function M.layout(S)
     return L
 end
 
+-- 5 solid alternating layers (1.0 mm at 0.2 mm layer height):
+-- flat rigid base without sparse-infill pillowing, fast to print.
 M.LAYER_PLAN = {
     {role = "bottom", width = "first", angle = 45},
-    {role = "bottom", width = "wall", angle = 135},
-    {role = "sparse", width = "wall", angle = 45},
-    {role = "sparse", width = "wall", angle = 135},
-    {role = "sparse", width = "wall", angle = 45},
-    {role = "solid", width = "solid", angle = 135},
-    {role = "solid", width = "solid", angle = 45},
-    {role = "solid", width = "solid", angle = 135},
-    {role = "solid", width = "solid", angle = 45},
-    {role = "top", width = "solid", angle = 45},
+    {role = "solid",  width = "solid", angle = 135},
+    {role = "solid",  width = "solid", angle = 45},
+    {role = "solid",  width = "solid", angle = 135},
+    {role = "top",    width = "solid", angle = 45},
 }
 
 function M.ironing_epm(draw, nozzle, layer_height, spacing, filament_d, base_flow_mult, iron_flow_pct)
@@ -156,19 +186,14 @@ function M.draw_pad(draw, w, pad, i, S, L, speed)
     local fx, fy = pad.x0 + wall_spacing, pad.y0 + wall_spacing
     local fsz_x = M.PAD_W - 2 * wall_spacing
     local fsz_y = M.PAD_H - 2 * wall_spacing
-    local opts = {
+    draw.fill_zigzag(w, fx, fy, fsz_x, fsz_y, {
         line_width = width,
         layer_height = L.h,
         epm = epm,
         speed = fill_speed,
         layer_z = z,
         angle = plan.angle,
-    }
-
-    if plan.role == "sparse" then
-        opts.spacing = (width - L.h * (1 - math.pi / 4)) / M.SPARSE_DENSITY
-    end
-    draw.fill_zigzag(w, fx, fy, fsz_x, fsz_y, opts)
+    })
 
     -- Ironing pass right after the top solid layer is completed
     if plan.role == "top" then
@@ -192,20 +217,34 @@ function M.draw_pad(draw, w, pad, i, S, L, speed)
         })
     end
 
-    -- Label tab and 7-segment numbers
-    if i <= M.TAB_LAYERS then
-        draw.draw_box(w, pad.tab_x0, pad.tab_y0, M.TAB_W,
-                      M.TAB_H + L.width.wall,
-                      {perimeters = 1, line_width = wall_w, layer_height = L.h,
-                       epm = epm_wall, speed = wall_speed, layer_z = z,
-                       fill = true})
-    elseif i == M.TAB_LAYERS + 1 then
-        local epm_glyph = draw.e_per_mm(S.nozzle, L.h, S.filament_d, base_mult)
-        local ox = pad.tab_x0 + (M.TAB_W - #pad.label * 3) / 2
-        local oy = pad.tab_y0 + L.width.wall + (M.TAB_H - 4) / 2
-        draw.draw_number(w, ox, oy, pad.label,
-                         {epm = epm_glyph, speed = M.GLYPH_SPEED, layer_z = z,
-                          horizontal = true})
+    -- Optional label tab and 7-segment numbers (height 1 layer, thickness 2 perimeters)
+    if L.draw_labels then
+        if i <= M.TAB_LAYERS then
+            draw.draw_box(w, pad.tab_x0, pad.tab_y0, M.TAB_W,
+                          M.TAB_H + L.width.wall,
+                          {perimeters = 1, line_width = wall_w, layer_height = L.h,
+                           epm = epm_wall, speed = wall_speed, layer_z = z,
+                           fill = true})
+        elseif i == M.TAB_LAYERS + 1 then
+            draw.emit(w, string.format("; LABEL %s", pad.label))
+            local glyph_w = L.width.wall
+            local epm_glyph = draw.e_per_mm(glyph_w, L.h, S.filament_d, base_mult)
+            local raw_w = math.max(2.0, (#pad.label - 1) * 3.0 + 2.0)
+            local max_w = M.TAB_W - 2.0
+            local scale = math.min(1.0, max_w / raw_w)
+            local ox = pad.tab_x0 + (M.TAB_W - raw_w * scale) / 2
+            local oy = pad.tab_y0 + L.width.wall + (M.TAB_H - 4.0 * scale) / 2
+            draw.draw_number(w, ox, oy, pad.label, {
+                epm = epm_glyph,
+                speed = M.GLYPH_SPEED,
+                layer_z = z,
+                horizontal = true,
+                scale = scale,
+                line_width = glyph_w,
+                layer_height = L.h,
+                perimeters = 2,
+            })
+        end
     end
 end
 

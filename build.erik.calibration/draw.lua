@@ -8,7 +8,7 @@ local function fmm(v) return string.format("%.3f", v) end
 function M.new(opts)
     local retract_speed = opts.retract_speed or 35
     return {
-        x = 0, y = 0,
+        x = 0, y = 0, z = nil,
         travel_speed = opts.travel_speed or 150,
         retract = opts.retract or 0.8,
         retract_speed = retract_speed,
@@ -89,10 +89,14 @@ function M.park_at(w, x, y, layer_z)
     M.retract(w)
     if w.zhop > 0 then
         M.emit(w, string.format("G1 Z%s F%d", fmm(layer_z + w.zhop), f_travel))
+    elseif w.z ~= layer_z then
+        M.emit(w, string.format("G1 Z%s F%d", fmm(layer_z), f_travel))
+        w.z = layer_z
     end
     M.emit(w, string.format("G1 X%s Y%s F%d", fmm(x), fmm(y), f_travel))
     if w.zhop > 0 then
         M.emit(w, string.format("G1 Z%s F%d", fmm(layer_z), f_travel))
+        w.z = layer_z
     end
     w.x, w.y = x, y
 end
@@ -357,14 +361,24 @@ function M.fmt_value(v)
     return s
 end
 
---- Draw `str` as 7-segment strokes; every segment starts with a full
---- retracted travel, as Orca's glyphs do. Default orientation is rotated 90
---- degrees CCW — string advances +Y, glyph tops point -X, (ox, oy) the outer
---- edge of the first glyph's baseline. opts.horizontal advances +X with
---- upright glyphs, (ox, oy) the lower-left corner. opts.scale scales glyph size.
+--- Draw `str` as 7-segment strokes; each segment is drawn with `opts.perimeters`
+--- parallel passes (default 2) separated by perimeter spacing so digits are bold
+--- and readable in a single layer. Default orientation is rotated 90 degrees CCW
+--- — string advances +Y, glyph tops point -X, (ox, oy) the outer edge of the
+--- first glyph's baseline. opts.horizontal advances +X with upright glyphs,
+--- (ox, oy) the lower-left corner. opts.scale scales glyph size.
 function M.draw_number(w, ox, oy, str, opts)
     local scale = opts.scale or 1.0
     local pitch = GLYPH_PITCH * scale
+    local perimeters = opts.perimeters or 2
+    local spacing = opts.spacing
+    if not spacing then
+        if opts.line_width and opts.layer_height then
+            spacing = opts.line_width - opts.layer_height * (1 - math.pi / 4)
+        else
+            spacing = 0.4
+        end
+    end
     local adv = 0
     local function map(u, v)
         local su, sv = u * scale, v * scale
@@ -374,12 +388,34 @@ function M.draw_number(w, ox, oy, str, opts)
     local function stroke(u0, v0, u1, v1)
         local x0, y0 = map(u0, v0)
         local x1, y1 = map(u1, v1)
-        M.travel_to(w, x0, y0, opts.layer_z)
-        M.line_to(w, x1, y1, opts.epm, opts.speed)
+        local dx, dy = x1 - x0, y1 - y0
+        local len = math.sqrt(dx * dx + dy * dy)
+        if len < 1e-6 then return end
+        if perimeters <= 1 then
+            M.travel_to(w, x0, y0, opts.layer_z)
+            M.line_to(w, x1, y1, opts.epm, opts.speed)
+            return
+        end
+        local nx, ny = -dy / len, dx / len
+        local half = (perimeters - 1) * spacing / 2
+        for p = 0, perimeters - 1 do
+            local off = -half + p * spacing
+            local ax, ay = x0 + nx * off, y0 + ny * off
+            local bx, by = x1 + nx * off, y1 + ny * off
+            if p % 2 == 1 then
+                ax, ay, bx, by = bx, by, ax, ay
+            end
+            if p == 0 then
+                M.travel_to(w, ax, ay, opts.layer_z)
+            else
+                M.line_to(w, ax, ay, opts.epm, opts.speed)
+            end
+            M.line_to(w, bx, by, opts.epm, opts.speed)
+        end
     end
     for i = 1, #str do
         local ch = str:sub(i, i)
-        if ch == "." then
+        if ch == "." or ch == "," then
             stroke(0.7, 0, 0.7, 0.8)
             adv = adv + pitch * 0.65
         elseif GLYPHS[ch] then

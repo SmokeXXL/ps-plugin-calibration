@@ -1,5 +1,5 @@
 -- ABOUTME: Flow-ratio calibration plugin: prints a grid of pads at stepped flow
--- ABOUTME: multipliers via per-layer custom G-code, each labeled on a tab.
+-- ABOUTME: multipliers via per-layer custom G-code, optionally labeled on a tab.
 
 info = {
     id = "flow_ratio",
@@ -8,7 +8,8 @@ info = {
     menu = "Calibration/Flow Ratio",
     params = {
         {name = "tool", label = "Extruder / Tool (1 = T0, 2 = T1...)", type = "int", default = 1},
-        {name = "use_monotonic", label = "Use Monotonic Pattern (true|false)", type = "bool", default = true},
+        {name = "use_monotonic", label = "Use Monotonic Pattern", type = "bool", default = true},
+        {name = "draw_labels", label = "Print Labels", type = "bool", default = true},
         {name = "nozzle", label = "Nozzle [mm] (0 = auto)", type = "string", default = "0"},
         {name = "layer_height", label = "Layer Height [mm] (0 = auto)", type = "string", default = "0"},
         {name = "start_flow", label = "Min Flow (start)", type = "string", default = "0.95"},
@@ -41,11 +42,12 @@ function execute(opts)
     local ui_lh = util.parse_number(opts.layer_height, 0)
 
     -- Přepínač: true = monotonic, false = archimedean
-    local is_monotonic = opts.use_monotonic ~= false
+    local is_monotonic = (opts.use_monotonic ~= false)
 
     local S = {
         tool_idx = tool_idx,
         slot_idx = slot_idx,
+        draw_labels = (opts.draw_labels ~= false),
         start_flow = util.parse_number(opts.start_flow, 0.95),
         count = math.max(1, opts.count or 11),
         step = util.parse_number(opts.step, 0.01),
@@ -83,6 +85,11 @@ function execute(opts)
         "Flow Ratio: Tool T%d retract %.2f mm @ %g mm/s, lift %.2f (from %s); max flow %g mm3/s",
         slot_idx, S.retract, S.retract_speed, S.zhop, retract_src, S.vol_cap))
 
+    if S.start_flow <= 0 or S.step < 0 then
+        util.show_error("Flow Ratio", "FLOW: BAD PARAMS")
+        return
+    end
+
     local r = gen.build(S)
     if not r.fits then
         util.show_error("Flow Ratio", "FLOW: BED TOO SMALL")
@@ -92,7 +99,7 @@ function execute(opts)
     local layer_h = S.layer_height
     bed:print_presets():set("layer_height", layer_h)
     bed:print_presets():set("first_layer_height", layer_h)
-    bed:print_presets():set("brim_type", "no_brim")
+    pcall(function() bed:print_presets():set("brim_type", "no_brim") end)
     bed:print_presets():set("skirts", 0)
 
     -- Force slicer to use selected tool for global settings and wiping
@@ -114,6 +121,6 @@ function execute(opts)
     }
 
     print(string.format(
-        "Flow Ratio: Tool T%d, %d pads, flow %.3f..%.3f (step %.3f), pattern %s",
-        S.slot_idx, S.count, r.v_min, r.v_max, S.step, S.pattern))
+        "Flow Ratio: Tool T%d, %d pads, labels=%s, flow %.3f..%.3f (step %.3f), pattern %s",
+        S.slot_idx, S.count, tostring(S.draw_labels), r.v_min, r.v_max, S.step, S.pattern))
 end
