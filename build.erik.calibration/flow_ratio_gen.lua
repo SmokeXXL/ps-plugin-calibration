@@ -87,6 +87,12 @@ function M.build_layer_plan(layer_height, use_sparse)
             end
         end
     end
+    -- Align alternating angles so the final top layer always prints at 45 deg
+    -- (finishes at bottom-right, exiting across the gap instead of over the pad).
+    local total_n = #plan
+    for idx = 1, total_n do
+        plan[idx].angle = ((total_n - idx) % 2 == 0) and 45 or 135
+    end
     return plan
 end
 
@@ -113,47 +119,73 @@ function M.layout(S)
     L.v_min = L.values[1]
     L.v_max = L.values[n]
 
-    L.cols = math.min(M.COLS, n)
-    L.rows = (n + L.cols - 1) // L.cols
-
     local cell_w = M.PAD_W
     local cell_h = M.PAD_H + (L.draw_labels and M.TAB_H or 0)
-    L.pitch_x = cell_w + M.GAP
-    L.pitch_y = cell_h + M.GAP
-    L.span_x = L.cols * cell_w + (L.cols - 1) * M.GAP
-    L.span_y = L.rows * cell_h + (L.rows - 1) * M.GAP
+    local cx, cy = S.bed_w / 2, S.bed_d / 2
+    local usable_w = S.bed_w - 2 * M.MARGIN
+    local max_cols = math.max(1, math.floor((usable_w + M.GAP) / (cell_w + M.GAP)))
 
     -- The handle cube is placed at the bed center (bed_w/2, bed_d/2) by PrusaSlicer.
-    -- Position the grid dynamically outside the handle cube (same logic as Ironing & PA Pattern):
-    -- prefer above, else below, else to the right, else to the left.
-    -- Only if the grid is too large for any single side, split rows around the cube
-    -- using an 8 mm row gap so the cube stays safely between rows.
-    local cx, cy = S.bed_w / 2, S.bed_d / 2
-    local above_y = cy + M.HANDLE_XY / 2 + M.CLEARANCE
-    local below_y = cy - M.HANDLE_XY / 2 - M.CLEARANCE - L.span_y
-    local right_x = cx + M.HANDLE_XY / 2 + M.CLEARANCE
-    local left_x = cx - M.HANDLE_XY / 2 - M.CLEARANCE - L.span_x
+    -- Try column counts from M.COLS up to max_cols so the entire grid stays cleanly
+    -- OUTSIDE the handle cube (preferring above with the fewest rows, then below,
+    -- then right, then left). On a 250x220 bed, up to 18 labeled pads fit above the cube.
+    local placed = false
+    local best = nil
+    local min_try_cols = math.min(M.COLS, n)
+    local max_try_cols = math.min(max_cols, n)
 
-    local fits_x_centered = (cx - L.span_x / 2 >= M.MARGIN)
-                            and (cx + L.span_x / 2 <= S.bed_w - M.MARGIN)
-    local fits_y_centered = (cy - L.span_y / 2 >= M.MARGIN)
-                            and (cy + L.span_y / 2 <= S.bed_d - M.MARGIN)
+    local function try_place(cols)
+        local rows = (n + cols - 1) // cols
+        local sx = cols * cell_w + (cols - 1) * M.GAP
+        local sy = rows * cell_h + (rows - 1) * M.GAP
+        local above_y = cy + M.HANDLE_XY / 2 + M.CLEARANCE
+        local below_y = cy - M.HANDLE_XY / 2 - M.CLEARANCE - sy
+        local right_x = cx + M.HANDLE_XY / 2 + M.CLEARANCE
+        local left_x = cx - M.HANDLE_XY / 2 - M.CLEARANCE - sx
+        local fx = (cx - sx / 2 >= M.MARGIN) and (cx + sx / 2 <= S.bed_w - M.MARGIN)
+        local fy = (cy - sy / 2 >= M.MARGIN) and (cy + sy / 2 <= S.bed_d - M.MARGIN)
+        if fx and (above_y + sy <= S.bed_d - M.MARGIN) then
+            return {prio = 1, rows = rows, cols = cols, sx = sx, sy = sy, xbase = cx - sx / 2, ybase = above_y}
+        elseif fx and (below_y >= M.MARGIN) then
+            return {prio = 2, rows = rows, cols = cols, sx = sx, sy = sy, xbase = cx - sx / 2, ybase = below_y}
+        elseif fy and (right_x + sx <= S.bed_w - M.MARGIN) then
+            return {prio = 3, rows = rows, cols = cols, sx = sx, sy = sy, xbase = right_x, ybase = cy - sy / 2}
+        elseif fy and (left_x >= M.MARGIN) then
+            return {prio = 4, rows = rows, cols = cols, sx = sx, sy = sy, xbase = left_x, ybase = cy - sy / 2}
+        end
+        return nil
+    end
 
-    if fits_x_centered and (above_y + L.span_y <= S.bed_d - M.MARGIN) then
-        L.xbase = cx - L.span_x / 2
-        L.ybase = above_y
-    elseif fits_x_centered and (below_y >= M.MARGIN) then
-        L.xbase = cx - L.span_x / 2
-        L.ybase = below_y
-    elseif fits_y_centered and (right_x + L.span_x <= S.bed_w - M.MARGIN) then
-        L.xbase = right_x
-        L.ybase = cy - L.span_y / 2
-    elseif fits_y_centered and (left_x >= M.MARGIN) then
-        L.xbase = left_x
-        L.ybase = cy - L.span_y / 2
+    for c = min_try_cols, max_try_cols do
+        local cand = try_place(c)
+        if cand then
+            if not best
+               or cand.prio < best.prio
+               or (cand.prio == best.prio and cand.rows < best.rows) then
+                best = cand
+            end
+        end
+    end
+
+    L.pitch_x = cell_w + M.GAP
+    L.pitch_y = cell_h + M.GAP
+
+    if best then
+        L.cols = best.cols
+        L.rows = best.rows
+        L.span_x = best.sx
+        L.span_y = best.sy
+        L.xbase = best.xbase
+        L.ybase = best.ybase
+        placed = true
     else
-        local split_gap = math.max(M.GAP, 8.0)
+        -- Grid too large for any single side: widen to max_cols and split rows around
+        -- the center handle cube with a generous 12 mm corridor.
+        L.cols = max_try_cols
+        L.rows = (n + L.cols - 1) // L.cols
+        local split_gap = math.max(M.GAP, 12.0)
         L.pitch_y = cell_h + split_gap
+        L.span_x = L.cols * cell_w + (L.cols - 1) * M.GAP
         L.span_y = L.rows * cell_h + (L.rows - 1) * split_gap
         L.xbase = cx - L.span_x / 2
         L.ybase = cy + split_gap / 2 - (L.rows // 2) * L.pitch_y

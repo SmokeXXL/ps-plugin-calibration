@@ -39,12 +39,17 @@ end
 function M.writer_opts(S)
     local deretract = S.deretract_speed
     if deretract == 0 then deretract = nil end
+    local zhop = (S.zhop and S.zhop > 0) and S.zhop or 0.4
+    local retracted = true
+    if S.entry_retracted ~= nil then
+        retracted = S.entry_retracted
+    end
     return {
         travel_speed = S.travel_speed,
         retract = S.retract, retract_speed = S.retract_speed,
         deretract_speed = deretract,
-        zhop = S.zhop,
-        retracted = S.retract_layer_change ~= false,
+        zhop = zhop,
+        retracted = retracted,
         max_e_rate = M.max_e_rate(S.vol_cap, S.filament_d),
     }
 end

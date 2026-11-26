@@ -86,6 +86,13 @@ function M.build_layer_plan(layer_height, realistic_base)
             end
         end
     end
+    -- Align alternating angles so the final top layer prints at 135 deg,
+    -- allowing the perpendicular ironing pass to run at 45 deg (finishing at
+    -- bottom-right and exiting across the gap rather than over the ironed pad).
+    local total_n = #plan
+    for idx = 1, total_n do
+        plan[idx].angle = ((total_n - idx) % 2 == 0) and 135 or 45
+    end
     return plan
 end
 
@@ -154,7 +161,7 @@ function M.layout(S)
         L.xbase = left_x
         L.ybase = cy - L.span_y / 2
     else
-        local split_gap = math.max(M.GAP, 8.0)
+        local split_gap = math.max(M.GAP, 12.0)
         L.pitch_y = cell_h + split_gap
         L.span_y = L.rows * cell_h + (L.rows - 1) * split_gap
         L.xbase = cx - L.span_x / 2

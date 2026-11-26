@@ -87,7 +87,7 @@ function execute(opts)
             return tools[1]:nozzle_diameter()
         end),
         perimeter_speed = util.tool_value(bed, slot_idx, "perimeter_speed", 0),
-        travel_speed = util.tool_value(bed, slot_idx, "travel_speed", 150),
+        travel_speed = util.tool_value(bed, slot_idx, "travel_speed", 150, true),
         vol_cap = util.guarded(0, function()
             return bed:material_presets(slot_idx):value("filament_max_volumetric_speed")
         end),
@@ -97,16 +97,17 @@ function execute(opts)
         flow_mult = util.guarded(1.0, function()
             return bed:material_presets(slot_idx):value("extrusion_multiplier")
         end),
-        retract = util.tool_value(bed, slot_idx, "retract_length", 0.8),
-        retract_speed = util.tool_value(bed, slot_idx, "retract_speed", 35),
+        retract = util.tool_value(bed, slot_idx, "retract_length", 0.8, true),
+        retract_speed = util.tool_value(bed, slot_idx, "retract_speed", 35, true),
         deretract_speed = util.tool_value(bed, slot_idx, "deretract_speed", 0),
-        zhop = util.tool_value(bed, slot_idx, "retract_lift", 0.5),
+        zhop = util.tool_value(bed, slot_idx, "retract_lift", 0.5, true),
         retract_layer_change = util.tool_value(bed, slot_idx, "retract_layer_change", true),
     }
-    local _, retract_src = util.tool_value(bed, slot_idx, "retract_length", 0.8)
+    local _, retract_src = util.tool_value(bed, slot_idx, "retract_length", 0.8, true)
+    local _, lift_src = util.tool_value(bed, slot_idx, "retract_lift", 0.5, true)
     print(string.format(
-        "PA Pattern: Tool T%d retract %.2f mm @ %g mm/s, lift %.2f (from %s); max flow %g mm3/s",
-        slot_idx, S.retract, S.retract_speed, S.zhop, retract_src, S.vol_cap))
+        "PA Pattern: Tool T%d retract %.2f mm @ %g mm/s (from %s), lift %.2f (from %s); max flow %g mm3/s",
+        slot_idx, S.retract, S.retract_speed, retract_src, S.zhop, lift_src, S.vol_cap))
 
     if S.pa_start < 0 or S.pa_step <= 0 or S.pa_end < S.pa_start + S.pa_step then
         util.show_error("PA Pattern", "PA: BAD RANGE")

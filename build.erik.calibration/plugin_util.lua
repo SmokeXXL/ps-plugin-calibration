@@ -17,8 +17,11 @@ end
 --- print and the filament may override, so reading the print preset alone
 --- returns a value this tool never prints with. A box that lacks the key, or
 --- leaves the override unset, raises or yields nil and falls through.
+--- When ignore_zero is true, non-positive numeric values (<= 0) are treated as
+--- unset and fall through (prevents unchecked 0 overrides in PrusaSlicer 3.0
+--- from disabling Z-hop or retraction speeds).
 --- Returns the value and the box it came from.
-function M.tool_value(bed, slot_idx, name, fallback)
+function M.tool_value(bed, slot_idx, name, fallback, ignore_zero)
     local sources = {
         {"filament", function() return bed:material_presets(slot_idx):value(name) end},
         {"tool", function() return bed:tool_print_presets(slot_idx):value(name) end},
@@ -26,7 +29,11 @@ function M.tool_value(bed, slot_idx, name, fallback)
     }
     for _, src in ipairs(sources) do
         local ok, v = pcall(src[2])
-        if ok and v ~= nil then return v, src[1] end
+        if ok and v ~= nil then
+            if not (ignore_zero and type(v) == "number" and v <= 0) then
+                return v, src[1]
+            end
+        end
     end
     return fallback, "default"
 end
