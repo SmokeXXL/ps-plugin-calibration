@@ -17,8 +17,8 @@ info = {
         {name = "count", label = "Sample Count", type = "int", default = 11},
         {name = "step", label = "Step", type = "string", default = "0.01"},
         {name = "speed", label = "Speed [mm/s] (0 = auto)", type = "int", default = 0},
-        {name = "bed_width", label = "Bed Width [mm]", type = "int", default = 250},
-        {name = "bed_depth", label = "Bed Depth [mm]", type = "int", default = 220},
+        {name = "bed_width", label = "Bed Width [mm] (0 = auto)", type = "int", default = 0},
+        {name = "bed_depth", label = "Bed Depth [mm] (0 = auto)", type = "int", default = 0},
     },
 }
 
@@ -45,6 +45,8 @@ function execute(opts)
     -- Přepínač: true = monotonic, false = archimedean
     local is_monotonic = (opts.use_monotonic ~= false)
 
+    local bed_w, bed_d, bed_src = util.resolve_bed_size(bed, opts.bed_width, opts.bed_depth)
+
     local S = {
         tool_idx = tool_idx,
         slot_idx = slot_idx,
@@ -55,8 +57,8 @@ function execute(opts)
         step = util.parse_number(opts.step, 0.01),
         pattern = is_monotonic and "monotonic" or "archimedean",
         speed = opts.speed,
-        bed_w = opts.bed_width,
-        bed_d = opts.bed_depth,
+        bed_w = bed_w,
+        bed_d = bed_d,
         layer_height = (ui_lh > 0) and ui_lh or util.guarded(0.2, function()
             return bed:print_presets():value("layer_height")
         end),
@@ -85,8 +87,8 @@ function execute(opts)
     local _, retract_src = util.tool_value(bed, slot_idx, "retract_length", 0.8, true)
     local _, lift_src = util.tool_value(bed, slot_idx, "retract_lift", 0.5, true)
     print(string.format(
-        "Flow Ratio: Tool T%d retract %.2f mm @ %g mm/s (from %s), lift %.2f (from %s); max flow %g mm3/s",
-        slot_idx, S.retract, S.retract_speed, retract_src, S.zhop, lift_src, S.vol_cap))
+        "Flow Ratio: Tool T%d retract %.2f mm @ %g mm/s (from %s), lift %.2f (from %s); max flow %g mm3/s; bed %gx%g (%s)",
+        slot_idx, S.retract, S.retract_speed, retract_src, S.zhop, lift_src, S.vol_cap, bed_w, bed_d, bed_src))
 
     if S.start_flow <= 0 or S.step < 0 then
         util.show_error("Flow Ratio", "FLOW: BAD PARAMS")

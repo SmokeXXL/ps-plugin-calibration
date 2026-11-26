@@ -20,8 +20,8 @@ info = {
         {name = "speed_count", label = "Speed Sample Count (Rows)", type = "int", default = 3},
         {name = "spacing", label = "Ironing Line Spacing [mm]", type = "string", default = "0.1"},
         {name = "base_speed", label = "Base Print Speed [mm/s] (0 = auto)", type = "int", default = 0},
-        {name = "bed_width", label = "Bed Width [mm]", type = "int", default = 250},
-        {name = "bed_depth", label = "Bed Depth [mm]", type = "int", default = 220},
+        {name = "bed_width", label = "Bed Width [mm] (0 = auto)", type = "int", default = 0},
+        {name = "bed_depth", label = "Bed Depth [mm] (0 = auto)", type = "int", default = 0},
     },
 }
 
@@ -45,6 +45,8 @@ function execute(opts)
     local ui_nozzle = util.parse_number(opts.nozzle, 0)
     local ui_lh = util.parse_number(opts.layer_height, 0)
 
+    local bed_w, bed_d, bed_src = util.resolve_bed_size(bed, opts.bed_width, opts.bed_depth)
+
     local S = {
         tool_idx = tool_idx,
         slot_idx = slot_idx,
@@ -58,8 +60,8 @@ function execute(opts)
         speed_count = math.max(1, opts.speed_count or 3),
         spacing = util.parse_number(opts.spacing, 0.1),
         speed = opts.base_speed,
-        bed_w = opts.bed_width,
-        bed_d = opts.bed_depth,
+        bed_w = bed_w,
+        bed_d = bed_d,
         layer_height = (ui_lh > 0) and ui_lh or util.guarded(0.2, function()
             return bed:print_presets():value("layer_height")
         end),
@@ -90,8 +92,8 @@ function execute(opts)
     local _, retract_src = util.tool_value(bed, slot_idx, "retract_length", 0.8, true)
     local _, lift_src = util.tool_value(bed, slot_idx, "retract_lift", 0.5, true)
     print(string.format(
-        "Ironing: Tool T%d retract %.2f mm @ %g mm/s (from %s), lift %.2f (from %s); max flow %g mm3/s",
-        slot_idx, S.retract, S.retract_speed, retract_src, S.zhop, lift_src, S.vol_cap))
+        "Ironing: Tool T%d retract %.2f mm @ %g mm/s (from %s), lift %.2f (from %s); max flow %g mm3/s; bed %gx%g (%s)",
+        slot_idx, S.retract, S.retract_speed, retract_src, S.zhop, lift_src, S.vol_cap, bed_w, bed_d, bed_src))
 
     if S.flow_start <= 0 or S.speed_start <= 0 or S.spacing <= 0 or S.flow_step < 0 or S.speed_step < 0 then
         util.show_error("Ironing", "IRONING: BAD PARAMS")

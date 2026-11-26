@@ -148,24 +148,39 @@ function M.layout(S)
     local fits_y_centered = (cy - L.span_y / 2 >= M.MARGIN)
                             and (cy + L.span_y / 2 <= S.bed_d - M.MARGIN)
 
+    local row_y = {}
     if fits_x_centered and (above_y + L.span_y <= S.bed_d - M.MARGIN) then
         L.xbase = cx - L.span_x / 2
         L.ybase = above_y
+        for r = 0, L.rows - 1 do row_y[r] = L.ybase + r * L.pitch_y end
     elseif fits_x_centered and (below_y >= M.MARGIN) then
         L.xbase = cx - L.span_x / 2
         L.ybase = below_y
+        for r = 0, L.rows - 1 do row_y[r] = L.ybase + r * L.pitch_y end
     elseif fits_y_centered and (right_x + L.span_x <= S.bed_w - M.MARGIN) then
         L.xbase = right_x
         L.ybase = cy - L.span_y / 2
+        for r = 0, L.rows - 1 do row_y[r] = L.ybase + r * L.pitch_y end
     elseif fits_y_centered and (left_x >= M.MARGIN) then
         L.xbase = left_x
         L.ybase = cy - L.span_y / 2
+        for r = 0, L.rows - 1 do row_y[r] = L.ybase + r * L.pitch_y end
     else
-        local split_gap = math.max(M.GAP, 12.0)
-        L.pitch_y = cell_h + split_gap
-        L.span_y = L.rows * cell_h + (L.rows - 1) * split_gap
+        -- Single 12 mm corridor around the centered handle cube; normal M.GAP elsewhere.
+        local corridor = math.max(M.GAP, M.HANDLE_XY + 2 * M.CLEARANCE + 1.0)
+        local rows_below = L.rows // 2
+        local below_top = cy - corridor / 2
+        local above_bot = cy + corridor / 2
+        for r = 0, rows_below - 1 do
+            row_y[r] = below_top - (rows_below - r) * cell_h - (rows_below - 1 - r) * M.GAP
+        end
+        for r = rows_below, L.rows - 1 do
+            local k = r - rows_below
+            row_y[r] = above_bot + k * L.pitch_y
+        end
         L.xbase = cx - L.span_x / 2
-        L.ybase = cy + split_gap / 2 - (L.rows // 2) * L.pitch_y
+        L.ybase = row_y[0]
+        L.span_y = (row_y[L.rows - 1] + cell_h) - row_y[0]
     end
 
     L.extents = {
@@ -184,7 +199,7 @@ function M.layout(S)
         for c = 0, L.cols - 1 do
             local ir_flow = f_start + c * f_step
             local x0 = L.xbase + c * L.pitch_x
-            local y0 = L.ybase + r * L.pitch_y
+            local y0 = row_y[r]
             local label
             if L.rows == 1 then
                 label = fmt_compact(ir_flow)

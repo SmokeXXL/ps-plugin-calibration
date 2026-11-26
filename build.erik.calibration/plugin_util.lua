@@ -1,5 +1,5 @@
 -- ABOUTME: Shared helpers for plugin glue scripts: guarded preset reads,
--- ABOUTME: plate-visible error reporting, and numeric param parsing.
+-- ABOUTME: automatic bed-size detection, plate-visible errors, and numeric parsing.
 
 local M = {}
 
@@ -36,6 +36,106 @@ function M.tool_value(bed, slot_idx, name, fallback, ignore_zero)
         end
     end
     return fallback, "default"
+end
+
+--- Parse a PrusaSlicer bed_shape string (e.g. "0x0,248x0,248x205,0x205") into
+--- width and depth [mm]. Returns nil if unparseable or degenerate.
+function M.parse_bed_shape(shape)
+    if type(shape) ~= "string" or shape == "" then return nil end
+    local min_x, max_x = math.huge, -math.huge
+    local min_y, max_y = math.huge, -math.huge
+    local count = 0
+    for xs, ys in shape:gmatch("([%-]?%d+%.?%d*)x([%-]?%d+%.?%d*)") do
+        local x, y = tonumber(xs), tonumber(ys)
+        if x and y then
+            if x < min_x then min_x = x end
+            if x > max_x then max_x = x end
+            if y < min_y then min_y = y end
+            if y > max_y then max_y = y end
+            count = count + 1
+        end
+    end
+    if count >= 3 and max_x > min_x and max_y > min_y then
+        return max_x - min_x, max_y - min_y
+    end
+    return nil
+end
+
+--- Known printable bed dimensions [mm] for Prusa printers available in
+--- PrusaSlicer 3.0 (alpha 14 and standard Prusa FFF bundle), matched by
+--- printer_model. More specific variants (INDX, CORE One L) are checked first.
+function M.bed_size_for_model(model)
+    if type(model) ~= "string" or model == "" then return nil end
+    local m = model:upper()
+    -- CORE One INDX family (e.g. COREONE_INDX4T, COREONE_INDX8T, COREONEINDX):
+    -- front tool dock reduces printable Y to 205 mm, X to 248 mm (center 124 x 102.5).
+    if m:find("INDX", 1, true) then
+        return 248, 205
+    end
+    -- CORE One L (e.g. COREONEL, COREONE_L)
+    if m:find("COREONE_L", 1, true) or m:find("COREONEL", 1, true)
+       or m:find("CORE ONE L", 1, true) then
+        return 300, 300
+    end
+    -- CORE One / CORE One+
+    if m:find("COREONE", 1, true) or m:find("CORE ONE", 1, true) then
+        return 250, 220
+    end
+    -- Prusa XL (single / 2T / 5T / IS)
+    if m == "XL" or m:match("^XL[%d_%-%s]") or m:find("XLIS", 1, true)
+       or m:find("PRUSA.*XL") then
+        return 360, 360
+    end
+    -- Prusa MINI / MINI+
+    if m:find("MINI", 1, true) then
+        return 180, 180
+    end
+    -- Prusa i3 family: MK4S, MK4, MK3.9S, MK3.9, MK3.5S, MK3.5, MK3S+, MK3S, MK3, MK2.5S, MK2.5, MK2S, MK2
+    if m:find("MK4", 1, true) or m:find("MK3", 1, true) or m:find("MK2", 1, true) then
+        return 250, 210
+    end
+    return nil
+end
+
+--- Resolve printable bed width and depth [mm].
+--- Any positive value entered in the dialog overrides auto-detection for that axis.
+--- When 0 (auto), tries printer_presets():value("bed_shape"), then printer_model
+--- lookup (covering all PrusaSlicer 3.0 alpha 14 Prusa printers including CORE One INDX),
+--- and finally falls back to 250 x 220 mm.
+--- Returns bed_w, bed_d, source_string.
+function M.resolve_bed_size(bed, req_w, req_d)
+    local w = (req_w and req_w > 0) and req_w or nil
+    local d = (req_d and req_d > 0) and req_d or nil
+    if w and d then
+        return w, d, "manual"
+    end
+
+    local det_w, det_d, src = nil, nil, nil
+    local shape = M.guarded(nil, function()
+        return bed:printer_presets():value("bed_shape")
+    end)
+    det_w, det_d = M.parse_bed_shape(shape)
+    if det_w and det_d then
+        src = "bed_shape"
+    else
+        local model = M.guarded("", function()
+            return bed:printer_presets():value("printer_model")
+        end)
+        det_w, det_d = M.bed_size_for_model(model)
+        if det_w and det_d then
+            src = "model:" .. tostring(model)
+        else
+            det_w, det_d = 250, 220
+            src = "default"
+        end
+    end
+
+    if w and not d then
+        return w, det_d, "manual+" .. src
+    elseif d and not w then
+        return det_w, d, src .. "+manual"
+    end
+    return det_w, det_d, src
 end
 
 --- 1-based tool index clamped to the number of tools the printer has, so a

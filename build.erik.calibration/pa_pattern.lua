@@ -22,8 +22,8 @@ info = {
         {name = "pa_step", label = "PA Step", type = "string", default = "0.005"},
         {name = "speed", label = "Speed [mm/s] (0 = auto)", type = "int", default = 0},
         {name = "accel", label = "Acceleration [mm/s^2] (0 = leave alone)", type = "int", default = 0},
-        {name = "bed_width", label = "Bed Width [mm]", type = "int", default = 250},
-        {name = "bed_depth", label = "Bed Depth [mm]", type = "int", default = 220},
+        {name = "bed_width", label = "Bed Width [mm] (0 = auto)", type = "int", default = 0},
+        {name = "bed_depth", label = "Bed Depth [mm] (0 = auto)", type = "int", default = 0},
         {
             name = "firmware",
             label = "Firmware (auto|marlin|marlin2|prusabuddy|klipper|rrf|repetier)",
@@ -62,6 +62,8 @@ function execute(opts)
     -- Přepínače: true = zapnuto, false = vypnuto
     local is_lines = (opts.use_lines ~= false)
 
+    local bed_w, bed_d, bed_src = util.resolve_bed_size(bed, opts.bed_width, opts.bed_depth)
+
     local S = {
         tool_idx = tool_idx,
         slot_idx = slot_idx,
@@ -73,8 +75,8 @@ function execute(opts)
         pa_step = util.parse_number(opts.pa_step, 0.005),
         speed = opts.speed,
         accel = opts.accel,
-        bed_w = opts.bed_width,
-        bed_d = opts.bed_depth,
+        bed_w = bed_w,
+        bed_d = bed_d,
         flavor = flavor,
         layer_height = (ui_lh > 0) and ui_lh or util.guarded(0.2, function()
             return bed:print_presets():value("layer_height")
@@ -106,8 +108,8 @@ function execute(opts)
     local _, retract_src = util.tool_value(bed, slot_idx, "retract_length", 0.8, true)
     local _, lift_src = util.tool_value(bed, slot_idx, "retract_lift", 0.5, true)
     print(string.format(
-        "PA Pattern: Tool T%d retract %.2f mm @ %g mm/s (from %s), lift %.2f (from %s); max flow %g mm3/s",
-        slot_idx, S.retract, S.retract_speed, retract_src, S.zhop, lift_src, S.vol_cap))
+        "PA Pattern: Tool T%d retract %.2f mm @ %g mm/s (from %s), lift %.2f (from %s); max flow %g mm3/s; bed %gx%g (%s)",
+        slot_idx, S.retract, S.retract_speed, retract_src, S.zhop, lift_src, S.vol_cap, bed_w, bed_d, bed_src))
 
     if S.pa_start < 0 or S.pa_step <= 0 or S.pa_end < S.pa_start + S.pa_step then
         util.show_error("PA Pattern", "PA: BAD RANGE")

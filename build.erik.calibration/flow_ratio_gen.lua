@@ -169,6 +169,7 @@ function M.layout(S)
 
     L.pitch_x = cell_w + M.GAP
     L.pitch_y = cell_h + M.GAP
+    local row_y = {}
 
     if best then
         L.cols = best.cols
@@ -177,18 +178,32 @@ function M.layout(S)
         L.span_y = best.sy
         L.xbase = best.xbase
         L.ybase = best.ybase
+        for r = 0, L.rows - 1 do
+            row_y[r] = L.ybase + r * L.pitch_y
+        end
         placed = true
     else
-        -- Grid too large for any single side: widen to max_cols and split rows around
-        -- the center handle cube with a generous 12 mm corridor.
+        -- Grid too large for any single side: widen to max_cols and place ONLY a single
+        -- 12 mm corridor around the centered handle cube while keeping normal M.GAP (6 mm)
+        -- between all other rows. Fits up to 36 labeled pads (6x6) on a 250x220 bed.
         L.cols = max_try_cols
         L.rows = (n + L.cols - 1) // L.cols
-        local split_gap = math.max(M.GAP, 12.0)
-        L.pitch_y = cell_h + split_gap
+        local corridor = math.max(M.GAP, M.HANDLE_XY + 2 * M.CLEARANCE + 1.0)
+        local rows_below = L.rows // 2
+        local rows_above = L.rows - rows_below
+        local below_top = cy - corridor / 2
+        local above_bot = cy + corridor / 2
+        for r = 0, rows_below - 1 do
+            row_y[r] = below_top - (rows_below - r) * cell_h - (rows_below - 1 - r) * M.GAP
+        end
+        for r = rows_below, L.rows - 1 do
+            local k = r - rows_below
+            row_y[r] = above_bot + k * L.pitch_y
+        end
         L.span_x = L.cols * cell_w + (L.cols - 1) * M.GAP
-        L.span_y = L.rows * cell_h + (L.rows - 1) * split_gap
         L.xbase = cx - L.span_x / 2
-        L.ybase = cy + split_gap / 2 - (L.rows // 2) * L.pitch_y
+        L.ybase = row_y[0]
+        L.span_y = (row_y[L.rows - 1] + cell_h) - row_y[0]
     end
 
     L.extents = {min_x = L.xbase, min_y = L.ybase,
@@ -202,7 +217,7 @@ function M.layout(S)
         local col = (p - 1) % L.cols
         local row = (p - 1) // L.cols
         local x0 = L.xbase + col * L.pitch_x
-        local y0 = L.ybase + row * L.pitch_y
+        local y0 = row_y[row]
         local v = L.values[p]
         table.insert(L.pads, {
             x0 = x0, y0 = y0, v = v, label = draw.fmt_value(v),
