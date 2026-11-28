@@ -99,14 +99,14 @@ function execute(opts)
         flow_mult = util.guarded(1.0, function()
             return bed:material_presets(slot_idx):value("extrusion_multiplier")
         end),
-        retract = util.tool_value(bed, slot_idx, "retract_length", 0.8, "filament"),
+        retract = util.tool_value(bed, slot_idx, "retract_length", 0.8, "overrides"),
         retract_speed = util.tool_value(bed, slot_idx, "retract_speed", 35, true),
         deretract_speed = util.tool_value(bed, slot_idx, "deretract_speed", 0),
-        zhop = util.tool_value(bed, slot_idx, "retract_lift", 0.5, "filament"),
+        zhop = util.tool_value(bed, slot_idx, "retract_lift", 0.5, "overrides"),
         retract_layer_change = util.tool_value(bed, slot_idx, "retract_layer_change", true),
     }
-    local _, retract_src = util.tool_value(bed, slot_idx, "retract_length", 0.8, "filament")
-    local _, lift_src = util.tool_value(bed, slot_idx, "retract_lift", 0.5, "filament")
+    local _, retract_src = util.tool_value(bed, slot_idx, "retract_length", 0.8, "overrides")
+    local _, lift_src = util.tool_value(bed, slot_idx, "retract_lift", 0.5, "overrides")
     print(string.format(
         "PA Pattern: Tool T%d retract %.2f mm @ %g mm/s (from %s), lift %.2f (from %s); max flow %g mm3/s; bed %gx%g (%s)",
         slot_idx, S.retract, S.retract_speed, retract_src, S.zhop, lift_src, S.vol_cap, bed_w, bed_d, bed_src))

@@ -18,10 +18,10 @@ end
 --- returns a value this tool never prints with. A box that lacks the key, or
 --- leaves the override unset, raises or yields nil and falls through.
 --- When ignore_zero is true, non-positive numeric values (<= 0) are treated as
---- unset and fall through across all sources. When ignore_zero is "filament",
---- non-positive values are only skipped in the filament override (preventing
---- unchecked 0 overrides in PrusaSlicer 3.0 from disabling retraction/Z-hop
---- while still honoring explicit 0 in tool/print presets).
+--- unset and fall through across all sources. When ignore_zero is "overrides",
+--- non-positive values are skipped in per-filament and per-tool overrides
+--- (preventing unchecked 0 overrides in PrusaSlicer 3.0 from disabling
+--- retraction/Z-hop while still honoring explicit 0 in the global print preset).
 --- Returns the value and the box it came from.
 function M.tool_value(bed, slot_idx, name, fallback, ignore_zero)
     local sources = {
@@ -34,6 +34,7 @@ function M.tool_value(bed, slot_idx, name, fallback, ignore_zero)
         if ok and v ~= nil then
             local skip_zero = (ignore_zero == true)
                 or (ignore_zero == "filament" and src[1] == "filament")
+                or (ignore_zero == "overrides" and (src[1] == "filament" or src[1] == "tool"))
             if not (skip_zero and type(v) == "number" and v <= 0) then
                 return v, src[1]
             end

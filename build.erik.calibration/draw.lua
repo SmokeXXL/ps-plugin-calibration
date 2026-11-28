@@ -6,13 +6,14 @@ local M = {}
 local function fmm(v) return string.format("%.3f", v) end
 
 M.RETRACT_ZERO_THRESHOLD = 0.05 -- values <= this [mm] disable retraction completely
+M.ZHOP_ZERO_THRESHOLD = 0.02    -- values <= this [mm] disable Z-hop completely
 
 function M.new(opts)
     local retract_speed = opts.retract_speed or 35
     local retract = (opts.retract ~= nil) and opts.retract or 0.8
     if retract <= M.RETRACT_ZERO_THRESHOLD then retract = 0 end
     local zhop = (opts.zhop ~= nil) and opts.zhop or 0.5
-    if zhop < 0 then zhop = 0 end
+    if zhop <= M.ZHOP_ZERO_THRESHOLD then zhop = 0 end
     return {
         x = 0, y = 0, z = nil,
         travel_speed = opts.travel_speed or 150,
@@ -48,6 +49,7 @@ function M.writer_opts(S)
     local retract = (S.retract ~= nil) and S.retract or 0.8
     if retract <= M.RETRACT_ZERO_THRESHOLD then retract = 0 end
     local zhop = (S.zhop ~= nil and S.zhop >= 0) and S.zhop or 0.4
+    if zhop <= M.ZHOP_ZERO_THRESHOLD then zhop = 0 end
     local retracted = (retract > 0)
     if S.entry_retracted ~= nil then
         retracted = S.entry_retracted and (retract > 0)
@@ -513,7 +515,7 @@ function M.draw_number(w, ox, oy, str, opts)
             spacing = 0.4
         end
     end
-    local use_double = ((opts.perimeters or 1) >= 2) and (scale >= 0.85)
+    local use_double = ((opts.perimeters or 2) >= 2) and (scale >= 0.85)
     local adv = 0
 
     local function map(u, v)
