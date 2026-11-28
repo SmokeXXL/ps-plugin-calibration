@@ -78,14 +78,14 @@ function execute(opts)
             return bed:material_presets(slot_idx):value("filament_diameter")
         end),
         flow_mult = 1.0,
-        retract = util.tool_value(bed, slot_idx, "retract_length", 0.8, true),
+        retract = util.tool_value(bed, slot_idx, "retract_length", 0.8, "filament"),
         retract_speed = util.tool_value(bed, slot_idx, "retract_speed", 35, true),
         deretract_speed = util.tool_value(bed, slot_idx, "deretract_speed", 0),
-        zhop = util.tool_value(bed, slot_idx, "retract_lift", 0.5, true),
+        zhop = util.tool_value(bed, slot_idx, "retract_lift", 0.5, "filament"),
         retract_layer_change = util.tool_value(bed, slot_idx, "retract_layer_change", true),
     }
-    local _, retract_src = util.tool_value(bed, slot_idx, "retract_length", 0.8, true)
-    local _, lift_src = util.tool_value(bed, slot_idx, "retract_lift", 0.5, true)
+    local _, retract_src = util.tool_value(bed, slot_idx, "retract_length", 0.8, "filament")
+    local _, lift_src = util.tool_value(bed, slot_idx, "retract_lift", 0.5, "filament")
     print(string.format(
         "Flow Ratio: Tool T%d retract %.2f mm @ %g mm/s (from %s), lift %.2f (from %s); max flow %g mm3/s; bed %gx%g (%s)",
         slot_idx, S.retract, S.retract_speed, retract_src, S.zhop, lift_src, S.vol_cap, bed_w, bed_d, bed_src))

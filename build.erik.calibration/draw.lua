@@ -5,16 +5,22 @@ local M = {}
 
 local function fmm(v) return string.format("%.3f", v) end
 
+M.RETRACT_ZERO_THRESHOLD = 0.05 -- values <= this [mm] disable retraction completely
+
 function M.new(opts)
     local retract_speed = opts.retract_speed or 35
+    local retract = (opts.retract ~= nil) and opts.retract or 0.8
+    if retract <= M.RETRACT_ZERO_THRESHOLD then retract = 0 end
+    local zhop = (opts.zhop ~= nil) and opts.zhop or 0.5
+    if zhop < 0 then zhop = 0 end
     return {
         x = 0, y = 0, z = nil,
         travel_speed = opts.travel_speed or 150,
-        retract = opts.retract or 0.8,
+        retract = retract,
         retract_speed = retract_speed,
         deretract_speed = opts.deretract_speed or retract_speed,
-        zhop = opts.zhop or 0.5,
-        retracted = opts.retracted or false,   -- extruder state on entry
+        zhop = zhop,
+        retracted = (retract > 0) and (opts.retracted or false) or false, -- extruder state on entry
         -- filament feed ceiling [mm of filament / s] from the filament's max
         -- volumetric speed; nil = uncapped. Every extrusion goes through
         -- line_to, which slows any move that would exceed it.
@@ -39,14 +45,16 @@ end
 function M.writer_opts(S)
     local deretract = S.deretract_speed
     if deretract == 0 then deretract = nil end
-    local zhop = (S.zhop and S.zhop > 0) and S.zhop or 0.4
-    local retracted = true
+    local retract = (S.retract ~= nil) and S.retract or 0.8
+    if retract <= M.RETRACT_ZERO_THRESHOLD then retract = 0 end
+    local zhop = (S.zhop ~= nil and S.zhop >= 0) and S.zhop or 0.4
+    local retracted = (retract > 0)
     if S.entry_retracted ~= nil then
-        retracted = S.entry_retracted
+        retracted = S.entry_retracted and (retract > 0)
     end
     return {
         travel_speed = S.travel_speed,
-        retract = S.retract, retract_speed = S.retract_speed,
+        retract = retract, retract_speed = S.retract_speed,
         deretract_speed = deretract,
         zhop = zhop,
         retracted = retracted,
@@ -74,16 +82,16 @@ function M.e_per_mm(line_width, layer_height, filament_d, flow_mult)
            / (math.pi * (filament_d / 2) ^ 2)
 end
 
---- Pull the retract length back; no-op when already retracted.
+--- Pull the retract length back; no-op when already retracted or disabled.
 function M.retract(w)
-    if w.retracted then return end
+    if w.retracted or w.retract <= 0 then return end
     M.emit(w, string.format("G1 E-%.3f F%d", w.retract, math.floor(w.retract_speed * 60)))
     w.retracted = true
 end
 
---- Feed the retract length back in; no-op when already primed.
+--- Feed the retract length back in; no-op when already primed or disabled.
 function M.unretract(w)
-    if not w.retracted then return end
+    if not w.retracted or w.retract <= 0 then return end
     M.emit(w, string.format("G1 E%.3f F%d", w.retract, math.floor(w.deretract_speed * 60)))
     w.retracted = false
 end
@@ -390,15 +398,22 @@ function M.draw_circle(w, cx, cy, r, opts)
     end
 end
 
--- 7-segment glyphs on a 2 x 4 mm cell. Segments in glyph space {x0, y0, x1, y1}.
-local SEGS = {
-    a = {0, 4, 2, 4}, b = {2, 2, 2, 4}, c = {2, 0, 2, 2}, d = {0, 0, 2, 0},
-    e = {0, 0, 0, 2}, f = {0, 2, 0, 4}, g = {0, 2, 2, 2},
-}
+-- Single-stroke continuous glyphs on a 2 x 4 mm cell (0 internal retractions).
 local GLYPHS = {
-    ["0"] = "abcdef", ["1"] = "bc", ["2"] = "abged", ["3"] = "abgcd",
-    ["4"] = "fgbc", ["5"] = "afgcd", ["6"] = "afgecd", ["7"] = "abc",
-    ["8"] = "abcdefg", ["9"] = "abcdfg",
+    ["0"] = {{0.4, 0}, {1.6, 0}, {2, 0.5}, {2, 3.5}, {1.6, 4}, {0.4, 4}, {0, 3.5}, {0, 0.5}, {0.4, 0}},
+    ["1"] = {{0.3, 3.2}, {1.1, 4}, {1.1, 0}},
+    ["2"] = {{0, 3.4}, {0.5, 4}, {1.5, 4}, {2, 3.4}, {2, 2.7}, {0, 0}, {2, 0}},
+    ["3"] = {{0, 3.5}, {0.5, 4}, {1.5, 4}, {2, 3.4}, {2, 2.6}, {0.7, 2.05}, {2, 1.5}, {2, 0.6}, {1.5, 0}, {0.5, 0}, {0, 0.5}},
+    ["4"] = {{1.5, 0}, {1.5, 4}, {0, 1.4}, {2, 1.4}},
+    ["5"] = {{2, 4}, {0.1, 4}, {0.1, 2.2}, {1.5, 2.2}, {2, 1.7}, {2, 0.5}, {1.5, 0}, {0.5, 0}, {0, 0.5}},
+    ["6"] = {{1.7, 4}, {0.6, 4}, {0, 3.2}, {0, 0.5}, {0.5, 0}, {1.5, 0}, {2, 0.5}, {2, 1.6}, {1.5, 2.1}, {0.1, 2.1}},
+    ["7"] = {{0, 4}, {2, 4}, {0.6, 0}},
+    ["8"] = {{1, 2.1}, {0.1, 2.6}, {0.1, 3.5}, {0.5, 4}, {1.5, 4}, {1.9, 3.5}, {1.9, 2.6}, {1, 2.1},
+             {0, 1.5}, {0, 0.5}, {0.5, 0}, {1.5, 0}, {2, 0.5}, {2, 1.5}, {1, 2.1}},
+    ["9"] = {{1.9, 2.0}, {0.5, 2.0}, {0, 2.5}, {0, 3.5}, {0.5, 4}, {1.5, 4}, {2, 3.5}, {2, 0.8}, {1.4, 0}, {0.3, 0}},
+    ["-"] = {{0.2, 2.0}, {1.8, 2.0}},
+    ["."] = {{0.35, 0}, {0.35, 0.55}},
+    [","] = {{0.35, 0}, {0.35, 0.55}},
 }
 local GLYPH_PITCH = 3.0
 
@@ -430,16 +445,66 @@ function M.text_width(str)
     return 2.0
 end
 
---- Draw `str` as 7-segment strokes; each segment is drawn with `opts.perimeters`
---- parallel passes (default 2) separated by perimeter spacing so digits are bold
---- and readable in a single layer. Default orientation is rotated 90 degrees CCW
---- — string advances +Y, glyph tops point -X, (ox, oy) the outer edge of the
---- first glyph's baseline. opts.horizontal advances +X with upright glyphs,
---- (ox, oy) the lower-left corner. opts.scale scales glyph size.
+--- Offset a 2D polyline by signed distance `d` with miter clamping so acute
+--- corners stay crisp and inside the glyph cell.
+local function offset_polyline(pts, d, miter_limit)
+    local n = #pts
+    local norms = {}
+    for i = 1, n - 1 do
+        local dx = pts[i + 1][1] - pts[i][1]
+        local dy = pts[i + 1][2] - pts[i][2]
+        local len = math.sqrt(dx * dx + dy * dy)
+        if len < 1e-9 then
+            norms[i] = {0, 0}
+        else
+            norms[i] = {-dy / len, dx / len}
+        end
+    end
+    local cdx = pts[n][1] - pts[1][1]
+    local cdy = pts[n][2] - pts[1][2]
+    local closed = (math.sqrt(cdx * cdx + cdy * cdy) < 1e-4)
+    local lim = miter_limit or 1.6
+    local out = {}
+    for i = 1, n do
+        local n1, n2
+        if i == 1 or i == n then
+            if closed then
+                n1, n2 = norms[n - 1], norms[1]
+            else
+                n1 = (i == 1) and norms[1] or norms[n - 1]
+                n2 = n1
+            end
+        else
+            n1, n2 = norms[i - 1], norms[i]
+        end
+        local bx, by = n1[1] + n2[1], n1[2] + n2[2]
+        local blen = math.sqrt(bx * bx + by * by)
+        local ux, uy, scale_f
+        if blen < 1e-6 then
+            ux, uy, scale_f = n1[1], n1[2], 1.0
+        else
+            ux, uy = bx / blen, by / blen
+            local denom = ux * n1[1] + uy * n1[2]
+            scale_f = math.min(lim, 1.0 / math.max(0.2, denom))
+        end
+        out[i] = {pts[i][1] + ux * d * scale_f, pts[i][2] + uy * d * scale_f}
+    end
+    return out, closed
+end
+
+--- Draw `str` as continuous single-stroke glyphs (at most one travel per glyph,
+--- zero internal retractions). When opts.perimeters >= 2 and scale >= 0.85,
+--- traces two parallel connected perimeters (out at +spacing/2, cap, back at
+--- -spacing/2) at standard 1.0x extrusion; smaller scales fall back to 1 pass
+--- so inner loops of 0/6/8/9 stay legible.
+--- Default orientation is rotated 90 degrees CCW — string advances +Y, glyph tops
+--- point -X, (ox, oy) the outer edge of the first glyph's baseline.
+--- opts.horizontal advances +X with upright glyphs, (ox, oy) the lower-left corner.
+--- opts.scale scales glyph size.
 function M.draw_number(w, ox, oy, str, opts)
     local scale = opts.scale or 1.0
     local pitch = GLYPH_PITCH * scale
-    local perimeters = opts.perimeters or 2
+    local epm = opts.epm or 0
     local spacing = opts.spacing
     if not spacing then
         if opts.line_width and opts.layer_height then
@@ -448,52 +513,49 @@ function M.draw_number(w, ox, oy, str, opts)
             spacing = 0.4
         end
     end
+    local use_double = ((opts.perimeters or 1) >= 2) and (scale >= 0.85)
     local adv = 0
+
     local function map(u, v)
         local su, sv = u * scale, v * scale
         if opts.horizontal then return ox + adv + su, oy + sv end
         return ox - sv, oy + adv + su
     end
-    local function stroke(u0, v0, u1, v1)
-        local x0, y0 = map(u0, v0)
-        local x1, y1 = map(u1, v1)
-        local dx, dy = x1 - x0, y1 - y0
-        local len = math.sqrt(dx * dx + dy * dy)
-        if len < 1e-6 then return end
-        if perimeters <= 1 then
-            M.travel_to(w, x0, y0, opts.layer_z)
-            M.line_to(w, x1, y1, opts.epm, opts.speed)
-            return
-        end
-        local nx, ny = -dy / len, dx / len
-        local half = (perimeters - 1) * spacing / 2
-        for p = 0, perimeters - 1 do
-            local off = -half + p * spacing
-            local ax, ay = x0 + nx * off, y0 + ny * off
-            local bx, by = x1 + nx * off, y1 + ny * off
-            if p % 2 == 1 then
-                ax, ay, bx, by = bx, by, ax, ay
-            end
-            if p == 0 then
-                M.travel_to(w, ax, ay, opts.layer_z)
-            else
-                M.line_to(w, ax, ay, opts.epm, opts.speed)
-            end
-            M.line_to(w, bx, by, opts.epm, opts.speed)
-        end
-    end
+
     for i = 1, #str do
         local ch = str:sub(i, i)
-        if ch == "." or ch == "," then
-            stroke(0.7, 0, 0.7, 0.8)
-            adv = adv + pitch * 0.65
-        elseif GLYPHS[ch] then
-            local segs = GLYPHS[ch]
-            for k = 1, #segs do
-                local sg = SEGS[segs:sub(k, k)]
-                stroke(sg[1], sg[2], sg[3], sg[4])
+        local pts = GLYPHS[ch]
+        if pts and #pts >= 2 then
+            local mapped = {}
+            for k = 1, #pts do
+                local xk, yk = map(pts[k][1], pts[k][2])
+                mapped[k] = {xk, yk}
             end
-            adv = adv + pitch
+            if not use_double then
+                M.travel_to(w, mapped[1][1], mapped[1][2], opts.layer_z)
+                for k = 2, #mapped do
+                    M.line_to(w, mapped[k][1], mapped[k][2], epm, opts.speed)
+                end
+            else
+                local half = spacing / 2
+                local fwd, closed = offset_polyline(mapped, half)
+                local rev = offset_polyline(mapped, -half)
+                M.travel_to(w, fwd[1][1], fwd[1][2], opts.layer_z)
+                for k = 2, #fwd do
+                    M.line_to(w, fwd[k][1], fwd[k][2], epm, opts.speed)
+                end
+                -- Smoothly step across by `spacing` and return along the second perimeter
+                M.line_to(w, rev[#rev][1], rev[#rev][2], epm, opts.speed)
+                for k = #rev - 1, 1, -1 do
+                    M.line_to(w, rev[k][1], rev[k][2], epm, opts.speed)
+                end
+                if not closed then
+                    M.line_to(w, fwd[1][1], fwd[1][2], epm, opts.speed)
+                end
+            end
+        end
+        if ch == "." or ch == "," then
+            adv = adv + pitch * 0.65
         else
             adv = adv + pitch
         end
